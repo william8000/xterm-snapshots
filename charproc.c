@@ -12899,6 +12899,7 @@ VTRealize(Widget w,
     XSetWMNormalHints(XtDisplay(xw), VShellWindow(xw), &xw->hints);
     TRACE(("%s@%d -- ", __FILE__, __LINE__));
     TRACE_WM_HINTS(xw);
+    xw->work.realizing = True;
 
     if ((pid_atom = CachedInternAtom(XtDisplay(xw), "_NET_WM_PID")) != None) {
 	/* XChangeProperty format 32 really is "long" */
@@ -13109,6 +13110,7 @@ VTRealize(Widget w,
 	screen->fullVwin.sb_info.width = 0;
 	ScrollBarOn(xw, False);
     }
+    xw->work.realizing = False;
 
     xtermSetWinSize(xw);
     TRACE(("" TRACE_R " VTRealize\n"));

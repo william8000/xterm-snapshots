@@ -166,7 +166,9 @@ DoResizeScreen(XtermWidget xw)
      */
     TRACE(("%s@%d -- ", __FILE__, __LINE__));
     TRACE_WM_HINTS(xw);
-    getXtermSizeHints(xw);
+    /* during VTRealize, xw->hints are the ones it just set */
+    if (!xw->work.realizing)
+	getXtermSizeHints(xw);
 
     xtermSizeHints(xw, ScrollbarWidth(screen));
 
@@ -232,7 +234,9 @@ DoResizeScreen(XtermWidget xw)
 	XSetWMNormalHints(screen->display, VShellWindow(xw), &xw->hints);
     }
 #endif
-    XSync(screen->display, False);	/* synchronize */
+    /* there is nothing to synchronize with until the window is mapped */
+    if (!xw->work.realizing)
+	XSync(screen->display, False);	/* synchronize */
     if (xtermAppPending())
 	xevents(xw);
 

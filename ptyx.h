@@ -3541,6 +3541,7 @@ typedef struct _Work {
     int min_mod;		/* zero for modifying control-keys */
 #define MAX_POINTER (XC_num_glyphs/2)
     Cursor pointer_cursors[MAX_POINTER]; /* saved cursors	*/
+    Boolean realizing;		/* VTRealize set the hints, not yet mapped */
 #ifndef NO_ACTIVE_ICON
     int active_icon;		/* use application icon window  */
     char *wm_name;
