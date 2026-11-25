@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # nightly_build.sh -- build xterm from git
 
 cd "$(dirname "$0")" || { echo "$0: Error: Initial cd $(dirname "$0") failed" ; exit 1 ; }
@@ -44,6 +44,7 @@ fi
     if [ -z "$x11_app_defaults_dir" ] ; then x11_app_defaults_dir=/usr/share/X11/app-defaults ; fi
     data_dir=/usr/share
     eval "$(rpm --eval '%set_build_flags')"
+    CFLAGS=" $CFLAGS " CFLAGS=${CFLAGS/ -g / }
     ./configure \
 	--prefix=/usr \
 	--enable-meta-sends-esc \
@@ -66,7 +67,9 @@ fi
     then
       make clean
     fi
-    if make
+    np=$(nproc)
+    if [ -z "$np" ] ; then np=1 ; fi
+    if make -j "$np"
     then
       if [ ! -x xterm ]
       then
