@@ -1,0 +1,14 @@
+*.o
+*.log
+*.tmp
+Makefile
+Tekparse.hin
+VTparse.hin
+builtin_icons.h
+config.status
+df-install
+minstall
+resize
+run-tic.sh
+xterm
+xtermcfg.h
