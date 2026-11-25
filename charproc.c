@@ -12716,6 +12716,7 @@ VTRealize(Widget w,
     int pr;
     Atom pid_atom;
     int i;
+    Bool utf8_first = False;
 
     TRACE(("VTRealize " TRACE_L "\n"));
 
@@ -12730,10 +12731,37 @@ VTRealize(Widget w,
 
     init_cachedCgs(xw);
 
-    if (!xtermLoadFont(xw,
-		       myfont,
-		       False,
-		       screen->menu_font_number)) {
+#if OPT_WIDE_CHARS
+    /*
+     * In UTF-8 mode, the built-in default font is replaced by the utf8Fonts
+     * resources after it is loaded.  Load those first instead, to avoid the
+     * round trips for fonts which would be discarded.
+     */
+    if (screen->utf8_mode
+	&& screen->menu_font_number == fontMenu_default
+	&& (DefaultFontN(xw) == NULL
+	    || !XmuCompareISOLatin1(DefaultFontN(xw), DEFFONT))
+	&& xtermLoadUtf8Fonts(xw)) {
+	TRACE(("loading the UTF-8 fonts first\n"));
+	utf8_first = True;
+	myfont = defaultVTFontNames(xw);
+	if (!xtermLoadFont(xw,
+			   myfont,
+			   False,
+			   screen->menu_font_number)) {
+	    TRACE(("cannot load the UTF-8 fonts, using the defaults\n"));
+	    (void) xtermLoadDefaultFonts(xw);
+	    myfont = defaultVTFontNames(xw);
+	    utf8_first = False;
+	}
+    }
+#endif
+
+    if (!utf8_first
+	&& !xtermLoadFont(xw,
+			  myfont,
+			  False,
+			  screen->menu_font_number)) {
 	if (XmuCompareISOLatin1(myfont->f_n, DEFFONT) != 0) {
 	    char *use_font = x_strdup(DEFFONT);
 	    xtermWarning("unable to open font \"%s\", trying \"%s\"....\n",
@@ -12754,8 +12782,9 @@ VTRealize(Widget w,
 #if OPT_WIDE_CHARS
     if (screen->utf8_mode) {
 	TRACE(("check if this is a wide font, if not try again\n"));
-	if (xtermLoadWideFonts(xw, False)) {
-	    SetVTFont(xw, screen->menu_font_number, True, NULL);
+	if (utf8_first || xtermLoadWideFonts(xw, False)) {
+	    if (!utf8_first)
+		SetVTFont(xw, screen->menu_font_number, True, NULL);
 	    /* we will not be able to switch to ISO-8859-1 */
 	    if (!screen->mergedVTFonts) {
 		screen->utf8_fonts = uAlways;

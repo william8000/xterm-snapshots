@@ -2496,6 +2496,17 @@ xtermLoadDefaultFonts(XtermWidget xw)
     TRACE(("xtermLoadDefaultFonts:%d\n", result));
     return result;
 }
+
+#if OPT_WIDE_CHARS
+/*
+ * Switch to the utf8Fonts resources without checking the current fonts.
+ */
+Bool
+xtermLoadUtf8Fonts(XtermWidget xw)
+{
+    return xtermLoadVTFonts(xw, XtNutf8Fonts, XtCUtf8Fonts);
+}
+#endif
 #endif /* OPT_LOAD_VTFONTS || OPT_WIDE_CHARS */
 
 #if OPT_LOAD_VTFONTS
