@@ -1119,10 +1119,11 @@ xtermLoadQueryFont(XtermWidget xw, const char *name)
 		&& open->fn != NULL
 		&& !strcmp(open->fn, name)) {
 		Font fid = XLoadFont(screen->display, name);
-		if ((result = copyFontStruct(open->fs, fid)) == NULL)
+		if ((result = copyFontStruct(open->fs, fid)) == NULL) {
 		    XUnloadFont(screen->display, fid);
-		else
+		} else {
 		    TRACE(("xtermLoadQueryFont copied metrics of %s\n", name));
+		}
 		break;
 	    }
 	}
