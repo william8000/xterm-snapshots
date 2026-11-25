@@ -2165,16 +2165,16 @@ VTInitModifiers(XtermWidget xw)
 
     if (keymap != NULL) {
 	KeySym *theMap;
-	int keycode_count;
+	KeyCode first_keycode = 0;
 
 	TRACE(("VTInitModifiers\n"));
 
+	/*
+	 * Xt fetches the same table for its translations, so share its copy
+	 * (which must not be freed) rather than asking the server again.
+	 */
 	XDisplayKeycodes(dpy, &min_keycode, &max_keycode);
-	keycode_count = (max_keycode - min_keycode + 1);
-	theMap = XGetKeyboardMapping(dpy,
-				     (KeyCode) min_keycode,
-				     keycode_count,
-				     &keysyms_per_keycode);
+	theMap = XtGetKeysymTable(dpy, &first_keycode, &keysyms_per_keycode);
 
 	if (theMap != NULL) {
 	    int i, j, k, l;
@@ -2210,15 +2210,16 @@ VTInitModifiers(XtermWidget xw)
 	    for (i = k = 0, mask = 1; i < 8; i++, mask <<= 1) {
 		for (j = 0; j < keymap->max_keypermod; j++) {
 		    KeyCode code = keymap->modifiermap[k++];
-		    if (code == 0)
+		    if (code < first_keycode || code > max_keycode)
 			continue;
 
+		    /*
+		     * Reading the table directly avoids XkbKeycodeToKeysym,
+		     * which fetches the XKB keymap from the server.
+		     */
 		    for (l = 0; l < keysyms_per_keycode; ++l) {
-#ifdef HAVE_XKBKEYCODETOKEYSYM
-			keysym = XkbKeycodeToKeysym(dpy, code, 0, l);
-#else
-			keysym = XKeycodeToKeysym(dpy, code, l);
-#endif
+			keysym = theMap[((code - first_keycode)
+					 * keysyms_per_keycode) + l];
 			if (keysym == NoSymbol) {
 			    /* EMPTY */ ;
 			} else if (keysym == XK_Num_Lock) {
@@ -2231,7 +2232,6 @@ VTInitModifiers(XtermWidget xw)
 		    }
 		}
 	    }
-	    XFree(theMap);
 	}
 
 	/* Don't disable any mods if "alwaysUseMods" is true. */
