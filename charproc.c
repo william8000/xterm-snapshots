@@ -12583,6 +12583,8 @@ discount_frame_extents(XtermWidget xw, int *high, int *wide)
 	TRACE(("   top:    %ld\n", extents[2]));
 	TRACE(("   bottom: %ld\n", extents[3]));
 
+	if (xw->work.wm_name == NULL)
+	    xw->work.wm_name = getWindowManagerName(xw);
 	if (!x_strncasecmp(xw->work.wm_name, "gnome shell", 11)) {
 	    *wide -= (int) (extents[0] + extents[1]);	/* -= (left+right) */
 	    *high -= (int) (extents[2] + extents[3]);	/* -= (top+bottom) */
@@ -12966,8 +12968,9 @@ VTRealize(Widget w,
 	ReportIcons(("using TrueType font as iconFont\n"));
     }
 #endif
-    xw->work.wm_name = getWindowManagerName(xw);
+    /* the name costs several round trips, so look it up only if needed */
     if ((xw->work.active_icon == eiDefault) && getIconicFont(screen)->fs) {
+	xw->work.wm_name = getWindowManagerName(xw);
 	ReportIcons(("window manager name is %s\n", xw->work.wm_name));
 	if (x_strncasecmp(xw->work.wm_name, "fvwm", 4) &&
 	    x_strncasecmp(xw->work.wm_name, "window maker", 12)) {
