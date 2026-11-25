@@ -1461,6 +1461,7 @@ CachedInternAtom(Display *display, const char *name)
 	"_NET_WM_STATE_MAXIMIZED_VERT",
 	"_NET_WM_STATE_REMOVE",
 	"_WIN_SUPPORTING_WM_CHECK",
+	"_XTERM_FONT_CACHE",
 #if defined(HAVE_XKB_BELL_EXT)
 	XkbBN_Info,
 	XkbBN_MarginBell,

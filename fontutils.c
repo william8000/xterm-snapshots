@@ -41,6 +41,7 @@
 #include <fontutils.h>
 #include <X11/Xmu/Drawing.h>
 #include <X11/Xmu/CharSet.h>
+#include <X11/Xatom.h>
 
 #include <main.h>
 #include <data.h>
@@ -51,6 +52,10 @@
 
 #include <stdio.h>
 #include <ctype.h>
+#include <dirent.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <utime.h>
 
 #define USE_FC_COLOR 0
 #if OPT_RENDERFONT
@@ -379,6 +384,8 @@ check_fontname(const char *name)
  * Returns a pointer to a static FontNameProperties structure
  * or NULL on error.
  */
+static char *fontAtomName(Display *dpy, Atom atom);
+
 static FontNameProperties *
 get_font_name_props(Display *dpy, const XFontStruct *fs, char **result)
 {
@@ -403,7 +410,7 @@ get_font_name_props(Display *dpy, const XFontStruct *fs, char **result)
 
 	for (i = 0, fp = fs->properties; i < fs->n_properties; i++, fp++) {
 	    if (fp->name == fontatom) {
-		name = XGetAtomName(dpy, fp->card32);
+		name = fontAtomName(dpy, fp->card32);
 		break;
 	    }
 	}
@@ -1054,6 +1061,22 @@ noUsableXft(XtermWidget xw, const char *name)
 #endif
 
 /*
+ * The number of entries in per_char, if the font has them.
+ */
+static size_t
+fontCharCount(const XFontStruct *fs)
+{
+    size_t result = 0;
+
+    if (fs->max_byte1 >= fs->min_byte1
+	&& fs->max_char_or_byte2 >= fs->min_char_or_byte2)
+	result = ((size_t) (fs->max_byte1 - fs->min_byte1 + 1)
+		  * (size_t) (fs->max_char_or_byte2
+			      - fs->min_char_or_byte2 + 1));
+    return result;
+}
+
+/*
  * Copy the metrics of a font which is already open, for a new font id.
  * XFreeFont frees the copy as it would a result of XLoadQueryFont.
  */
@@ -1071,9 +1094,7 @@ copyFontStruct(const XFontStruct *fs, Font fid)
 	copy->properties = NULL;
 	copy->per_char = NULL;
 	if (fs->per_char != NULL)
-	    nchars = ((size_t) (fs->max_byte1 - fs->min_byte1 + 1)
-		      * (size_t) (fs->max_char_or_byte2
-				  - fs->min_char_or_byte2 + 1));
+	    nchars = fontCharCount(fs);
 	if (fs->n_properties > 0
 	    && (copy->properties = malloc((size_t) fs->n_properties
 					  * sizeof(XFontProp))) == NULL) {
@@ -1095,6 +1116,438 @@ copyFontStruct(const XFontStruct *fs, Font fid)
     return copy;
 }
 
+/*
+ * The metrics of an ISO10646 font can be over 700kB, which is slow to fetch
+ * over a remote connection, so keep a copy on disk.
+ *
+ * The font which a name selects, and the atoms in its properties, belong to
+ * one X server.  A random token in a property of the root window identifies
+ * the server until it resets, and names the cache directory along with a hash
+ * of the font path.  A workstation with different fonts has a different token.
+ */
+#define FONT_CACHE_ATOM  "_XTERM_FONT_CACHE"
+#define FONT_CACHE_MAGIC 0x58544d43U	/* also detects the byte order */
+#define FONT_CACHE_DAYS  30
+#define FONT_CACHE_TOKEN 16
+
+/*
+ * A cache file holds this header, the properties, per_char, the requested
+ * name and the value of the FONT property, in that order.
+ */
+typedef struct {
+    unsigned magic;
+    unsigned size;		/* sizeof(FontCacheHead), checks the layout */
+    unsigned found;		/* zero if the server has no such font */
+    unsigned name_len;		/* includes the trailing NUL */
+    unsigned font_len;		/* zero if there is no FONT property */
+    unsigned n_per_char;
+    XFontStruct fs;		/* without its pointers or font id */
+} FontCacheHead;
+
+typedef struct _FontAtomName {
+    struct _FontAtomName *next;
+    Atom atom;
+    char *name;
+} FontAtomName;
+
+/* names of FONT property values read from the cache */
+static FontAtomName *font_atom_names;
+
+/*
+ * Return the name of an atom (to be freed with XFree), without asking the
+ * server if it is the FONT property of a cached font.
+ */
+static char *
+fontAtomName(Display *dpy, Atom atom)
+{
+    const FontAtomName *p;
+
+    for (p = font_atom_names; p != NULL; p = p->next) {
+	if (p->atom == atom)
+	    return x_strdup(p->name);
+    }
+    return XGetAtomName(dpy, atom);
+}
+
+static Atom
+fontNameAtom(Display *dpy, const XFontStruct *fs)
+{
+    Atom fontatom = CachedInternAtom(dpy, "FONT");
+    int n;
+
+    for (n = 0; n < fs->n_properties; ++n) {
+	if (fs->properties[n].name == fontatom)
+	    return (Atom) fs->properties[n].card32;
+    }
+    return None;
+}
+
+static unsigned
+fontCacheHash(unsigned hash, const char *data, size_t len)
+{
+    while (len-- != 0) {
+	hash ^= (unsigned char) *data++;
+	hash *= 16777619U;
+    }
+    return hash;
+}
+
+static char *
+fontCachePath(const char *dir, const char *leaf)
+{
+    char *result = malloc(strlen(dir) + strlen(leaf) + 2);
+
+    if (result != NULL)
+	sprintf(result, "%s/%s", dir, leaf);
+    return result;
+}
+
+static char *
+fontCacheFile(const char *dir, const char *name)
+{
+    char leaf[20];
+
+    sprintf(leaf, "%08x", fontCacheHash(2166136261U, name, strlen(name)));
+    return fontCachePath(dir, leaf);
+}
+
+/*
+ * Create a directory and its parents, readable only by the user.
+ */
+static Bool
+makeFontCacheDirs(char *path)
+{
+    char *s;
+
+    for (s = path + 1; *s != '\0'; ++s) {
+	if (*s == '/') {
+	    *s = '\0';
+	    if (mkdir(path, 0700) != 0 && errno != EEXIST) {
+		*s = '/';
+		return False;
+	    }
+	    *s = '/';
+	}
+    }
+    return (mkdir(path, 0700) == 0 || errno == EEXIST);
+}
+
+/*
+ * Remove the directories of servers which have not been used for a while.
+ */
+static void
+pruneFontCache(const char *base, const char *keep)
+{
+    DIR *dp = opendir(base);
+
+    if (dp != NULL) {
+	time_t limit = time(NULL) - (FONT_CACHE_DAYS * 24 * 60 * 60);
+	const struct dirent *de;
+
+	while ((de = readdir(dp)) != NULL) {
+	    char *path;
+	    struct stat sb;
+
+	    if (de->d_name[0] == '.'
+		|| (path = fontCachePath(base, de->d_name)) == NULL)
+		continue;
+	    if (strcmp(path, keep)
+		&& stat(path, &sb) == 0
+		&& S_ISDIR(sb.st_mode)
+		&& sb.st_mtime < limit) {
+		DIR *sub = opendir(path);
+
+		TRACE(("pruneFontCache %s\n", path));
+		if (sub != NULL) {
+		    const struct dirent *se;
+
+		    while ((se = readdir(sub)) != NULL) {
+			char *file;
+
+			if (se->d_name[0] != '.'
+			    && (file = fontCachePath(path, se->d_name)) != NULL) {
+			    unlink(file);
+			    free(file);
+			}
+		    }
+		    closedir(sub);
+		}
+		rmdir(path);
+	    }
+	    free(path);
+	}
+	closedir(dp);
+    }
+}
+
+/*
+ * Return the cache directory for this server, or NULL if there is none.
+ * Checking costs two round trips, once.
+ */
+static const char *
+fontCacheDir(XtermWidget xw)
+{
+    static Bool checked;
+    static char *result;
+
+    if (!checked) {
+	Display *dpy = TScreenOf(xw)->display;
+	Window root = DefaultRootWindow(dpy);
+	Atom atom = CachedInternAtom(dpy, FONT_CACHE_ATOM);
+	const char *xdg = getenv("XDG_CACHE_HOME");
+	const char *home = getenv("HOME");
+	char *base = NULL;
+	char token[FONT_CACHE_TOKEN + 1];
+	Atom type;
+	int format;
+	unsigned long nitems, after;
+	unsigned char *data = NULL;
+	char **paths;
+	int npaths = 0;
+	unsigned hash = 2166136261U;
+	int n;
+
+	checked = True;
+	if (!IsEmpty(xdg) && *xdg == '/') {
+	    if ((base = malloc(strlen(xdg) + sizeof("/xterm/fonts"))) != NULL)
+		sprintf(base, "%s/xterm/fonts", xdg);
+	} else if (!IsEmpty(home)) {
+	    if ((base = malloc(strlen(home) + sizeof("/.cache/xterm/fonts"))) != NULL)
+		sprintf(base, "%s/.cache/xterm/fonts", home);
+	}
+	if (base == NULL || atom == None) {
+	    free(base);
+	    return NULL;
+	}
+
+	token[0] = '\0';
+	if (XGetWindowProperty(dpy, root, atom, 0L, FONT_CACHE_TOKEN / 4,
+			       False, XA_STRING, &type, &format, &nitems,
+			       &after, &data) == Success
+	    && data != NULL) {
+	    if (type == XA_STRING
+		&& format == 8
+		&& nitems == FONT_CACHE_TOKEN
+		&& strspn((char *) data, "0123456789abcdef") == FONT_CACHE_TOKEN)
+		memcpy(token, data, sizeof(token));
+	    XFree(data);
+	}
+	if (token[0] == '\0') {
+	    unsigned char bytes[FONT_CACHE_TOKEN / 2];
+	    int fd = open("/dev/urandom", O_RDONLY);
+
+	    if (fd < 0 || read(fd, bytes, sizeof(bytes)) != (int) sizeof(bytes)) {
+		unsigned seed = ((unsigned) time(NULL) << 16) ^ (unsigned) getpid();
+		for (n = 0; n < (int) sizeof(bytes); ++n) {
+		    seed = seed * 1103515245U + 12345U;
+		    bytes[n] = (unsigned char) (seed >> 16);
+		}
+	    }
+	    if (fd >= 0)
+		close(fd);
+	    for (n = 0; n < (int) sizeof(bytes); ++n)
+		sprintf(token + (2 * n), "%02x", bytes[n]);
+	    XChangeProperty(dpy, root, atom, XA_STRING, 8, PropModeReplace,
+			    (unsigned char *) token, FONT_CACHE_TOKEN);
+	    TRACE(("fontCacheDir new token %s\n", token));
+	}
+
+	if ((paths = XGetFontPath(dpy, &npaths)) != NULL) {
+	    for (n = 0; n < npaths; ++n)
+		hash = fontCacheHash(hash, paths[n], strlen(paths[n]) + 1);
+	    XFreeFontPath(paths);
+	}
+
+	if ((result = malloc(strlen(base) + FONT_CACHE_TOKEN + 11)) != NULL) {
+	    sprintf(result, "%s/%s-%08x", base, token, hash);
+	    if (!makeFontCacheDirs(base)) {
+		FreeAndNull(result);
+	    } else if (mkdir(result, 0700) == 0) {
+		pruneFontCache(base, result);
+	    } else if (errno == EEXIST) {
+		(void) utime(result, NULL);	/* not yet old enough to prune */
+	    } else {
+		FreeAndNull(result);
+	    }
+	}
+	free(base);
+	TRACE(("fontCacheDir %s\n", NonNull(result)));
+    }
+    return result;
+}
+
+/*
+ * Return True if the cache has an entry for the name, setting *fsp to NULL if
+ * the server has no such font.
+ */
+static Bool
+readCachedFont(XtermWidget xw, const char *name, XFontStruct **fsp)
+{
+    Display *dpy = TScreenOf(xw)->display;
+    const char *dir = fontCacheDir(xw);
+    char *path;
+    char *data = NULL;
+    Bool result = False;
+    int fd;
+    struct stat sb;
+
+    *fsp = NULL;
+    if (dir == NULL || (path = fontCacheFile(dir, name)) == NULL)
+	return False;
+
+    if ((fd = open(path, O_RDONLY)) >= 0) {
+	if (fstat(fd, &sb) == 0
+	    && sb.st_size >= (off_t) sizeof(FontCacheHead)
+	    && sb.st_size < (off_t) (16 * 1024 * 1024)
+	    && (data = malloc((size_t) sb.st_size)) != NULL
+	    && read(fd, data, (size_t) sb.st_size) != sb.st_size) {
+	    FreeAndNull(data);
+	}
+	close(fd);
+    }
+
+    if (data != NULL) {
+	FontCacheHead head;
+	size_t name_len = strlen(name) + 1;
+	size_t props_size;
+	size_t chars_size;
+	const char *s;
+
+	memcpy(&head, data, sizeof(head));
+	props_size = (size_t) head.fs.n_properties * sizeof(XFontProp);
+	chars_size = (size_t) head.n_per_char * sizeof(XCharStruct);
+	s = data + sizeof(head) + props_size + chars_size;
+	if (head.magic == FONT_CACHE_MAGIC
+	    && head.size == sizeof(head)
+	    && head.name_len == name_len
+	    && head.font_len <= MAX_U_STRING
+	    && head.fs.n_properties >= 0
+	    && head.fs.n_properties <= 1024
+	    && (head.n_per_char == 0
+		|| head.n_per_char == fontCharCount(&head.fs))
+	    && ((size_t) sb.st_size
+		== sizeof(head) + props_size + chars_size
+		+ name_len + head.font_len)
+	    && !memcmp(s, name, name_len)) {
+	    result = True;
+	    if (head.found) {
+		const char *font_name = s + name_len;
+		XFontStruct temp = head.fs;
+
+		temp.properties = (XFontProp *) (void *) (data + sizeof(head));
+		temp.per_char = ((head.n_per_char != 0)
+				 ? (XCharStruct *) (void *) (data
+							     + sizeof(head)
+							     + props_size)
+				 : NULL);
+		if ((*fsp = copyFontStruct(&temp, None)) == NULL) {
+		    result = False;
+		} else {
+		    Atom atom;
+
+		    (*fsp)->fid = XLoadFont(dpy, name);
+		    if (head.font_len != 0
+			&& font_name[head.font_len - 1] == '\0'
+			&& (atom = fontNameAtom(dpy, *fsp)) != None) {
+			FontAtomName *p = malloc(sizeof(*p));
+
+			if (p != NULL && (p->name = x_strdup(font_name)) != NULL) {
+			    p->atom = atom;
+			    p->next = font_atom_names;
+			    font_atom_names = p;
+			} else {
+			    free(p);
+			}
+		    }
+		}
+	    }
+	}
+	free(data);
+    }
+    TRACE(("readCachedFont %s %s -> %s\n", name,
+	   result ? "found" : "missed",
+	   result ? (*fsp ? "font" : "no font") : "-"));
+    free(path);
+    return result;
+}
+
+/*
+ * Save the server's answer for the name, which may be that there is no font.
+ */
+static void
+writeCachedFont(XtermWidget xw, const char *name, const XFontStruct *fs)
+{
+    Display *dpy = TScreenOf(xw)->display;
+    const char *dir = fontCacheDir(xw);
+    char *path;
+    char *temp;
+    char *font_name = NULL;
+    FontCacheHead head;
+    FILE *fp;
+    int fd;
+    Bool ok;
+
+    if (dir == NULL || (path = fontCacheFile(dir, name)) == NULL)
+	return;
+    if ((temp = malloc(strlen(path) + 20)) == NULL) {
+	free(path);
+	return;
+    }
+    sprintf(temp, "%s.%ld", path, (long) getpid());
+
+    memset(&head, 0, sizeof(head));
+    head.magic = FONT_CACHE_MAGIC;
+    head.size = sizeof(head);
+    head.name_len = (unsigned) strlen(name) + 1;
+    if (fs != NULL) {
+	Atom atom = fontNameAtom(dpy, fs);
+
+	head.found = 1;
+	head.fs = *fs;
+	head.fs.ext_data = NULL;
+	head.fs.fid = None;
+	head.fs.properties = NULL;
+	head.fs.per_char = NULL;
+	if (fs->per_char != NULL)
+	    head.n_per_char = (unsigned) fontCharCount(fs);
+	/* XGetAtomName caches the name, so this costs xterm nothing later */
+	if (atom != None && (font_name = XGetAtomName(dpy, atom)) != NULL)
+	    head.font_len = (unsigned) strlen(font_name) + 1;
+    }
+
+    ok = False;
+    if ((fd = open(temp, O_WRONLY | O_CREAT | O_TRUNC, 0600)) >= 0) {
+	if ((fp = fdopen(fd, "wb")) == NULL) {
+	    close(fd);
+	} else {
+	    ok = (fwrite(&head, sizeof(head), 1, fp) == 1);
+	    if (ok && head.found) {
+		size_t nprops = (size_t) fs->n_properties;
+		if (nprops != 0)
+		    ok = (fwrite(fs->properties, sizeof(XFontProp), nprops, fp)
+			  == nprops);
+		if (ok && head.n_per_char != 0)
+		    ok = (fwrite(fs->per_char, sizeof(XCharStruct),
+				 (size_t) head.n_per_char, fp)
+			  == head.n_per_char);
+	    }
+	    if (ok)
+		ok = (fwrite(name, (size_t) head.name_len, 1, fp) == 1);
+	    if (ok && head.font_len != 0)
+		ok = (fwrite(font_name, (size_t) head.font_len, 1, fp) == 1);
+	    if (fclose(fp) != 0)
+		ok = False;
+	}
+	if (!ok || rename(temp, path) != 0)
+	    unlink(temp);
+    }
+    TRACE(("writeCachedFont %s %s\n", name, ok ? "saved" : "failed"));
+    if (font_name != NULL)
+	XFree(font_name);
+    free(temp);
+    free(path);
+}
+
 XFontStruct *
 xtermLoadQueryFont(XtermWidget xw, const char *name)
 {
@@ -1107,11 +1560,10 @@ xtermLoadQueryFont(XtermWidget xw, const char *name)
 	int n;
 
 	/*
-	 * At startup in UTF-8 mode, xterm loads the default fonts and then
-	 * the UTF-8 fonts, which usually derive the same wide font.  Its
-	 * metrics can be over 700kB, which is slow over a remote connection,
-	 * so copy them from the open font.  XLoadFont does not wait for a
-	 * reply.
+	 * When xterm switches fonts, e.g., to the UTF-8 fonts, the new set
+	 * often derives the same wide font.  Its metrics can be over 700kB,
+	 * which is slow over a remote connection, so copy them from the open
+	 * font.  XLoadFont does not wait for a reply.
 	 */
 	for (n = 0; n < fMAX; ++n) {
 	    const XTermFonts *open = &screen->fnts[n];
@@ -1127,8 +1579,10 @@ xtermLoadQueryFont(XtermWidget xw, const char *name)
 		break;
 	    }
 	}
-	if (result == NULL)
+	if (result == NULL && !readCachedFont(xw, name, &result)) {
 	    result = XLoadQueryFont(screen->display, name);
+	    writeCachedFont(xw, name, result);
+	}
     }
     TRACE(("xtermLoadQueryFont ->%s\n", visibleFont(result)));
     return result;
