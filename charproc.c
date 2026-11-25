@@ -556,7 +556,7 @@ static XtResource xterm_resources[] =
 #endif
 
 #ifndef NO_ACTIVE_ICON
-    Sres(XtNactiveIcon, XtCActiveIcon, misc.active_icon_s, "default"),
+    Sres(XtNactiveIcon, XtCActiveIcon, misc.active_icon_s, "false"),
     Ires(XtNiconBorderWidth, XtCBorderWidth, misc.icon_border_width, 2),
     Sres(XtNiconFont, XtCIconFont, screen.icon_fontname, "nil2"),
     Cres(XtNiconBorderColor, XtCBorderColor, misc.icon_border_pixel, XtDefaultBackground),

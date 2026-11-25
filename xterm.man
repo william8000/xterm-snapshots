@@ -2350,7 +2350,7 @@ window and will update as the content changes.
 Not all window managers necessarily support application icon windows.
 Some window managers
 will allow you to enter keystrokes into the active icon window.
-The default is \*(``default\*(''.
+The default is \*(``false\*(''.
 .IP
 \fI\*N\fP accepts either a keyword (ignoring case)
 or the number shown in parentheses:
