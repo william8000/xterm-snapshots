@@ -43,7 +43,21 @@ fi
     x11_app_defaults_dir=$(pkg-config --variable appdefaultdir xt)
     if [ -z "$x11_app_defaults_dir" ] ; then x11_app_defaults_dir=/usr/share/X11/app-defaults ; fi
     data_dir=/usr/share
-    eval "$(rpm --eval '%set_build_flags')"
+    # Use the distribution's build flags
+    build_flags=$(rpm --eval '%set_build_flags' 2>/dev/null)
+    case "$build_flags" in
+    *CFLAGS=*)
+      eval "$build_flags"
+      ;;
+    *)
+      # rpm on old distributions like CentOS 7 has no %set_build_flags; use the macros its %configure used
+      optflags=$(rpm --eval '%optflags' 2>/dev/null)
+      case "$optflags" in %*|'') ;; *) export CFLAGS="${CFLAGS:-$optflags}" ;; esac
+      ldflags=$(rpm --eval '%__global_ldflags' 2>/dev/null)
+      case "$ldflags" in %*|'') ;; *) export LDFLAGS="${LDFLAGS:-$ldflags}" ;; esac
+      ;;
+    esac
+    # Remove -g to make a smaller executable
     CFLAGS=" $CFLAGS " CFLAGS=${CFLAGS/ -g / }
     ./configure \
 	--prefix=/usr \
