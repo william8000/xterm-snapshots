@@ -1508,9 +1508,11 @@ extern char *ProcGetCWD(pid_t /* pid */);
 #if OPT_ISO_COLORS
 extern Boolean AllocOneColor(XtermWidget /* xw */, XColor * /* def */);
 extern Boolean QueryOneColor(XtermWidget /* xw */, XColor * /* def */);
+extern Boolean xtermPixelToRGB(XtermWidget /* xw */, XColor * /* def */);
 #else
 #define AllocOneColor(xw, def) ((def)->pixel = 0)
 #define QueryOneColor(xw, def) ((def)->red = (def)->green = (def)->blue = 0)
+#define xtermPixelToRGB(xw, def) False
 #endif
 
 #if OPT_MAXIMIZE

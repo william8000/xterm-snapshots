@@ -3364,8 +3364,13 @@ recolor_cursor(TScreen *screen,
 
     colordefs[0].pixel = fg;
     colordefs[1].pixel = bg;
-    XQueryColors(dpy, DefaultColormap(dpy, DefaultScreen(dpy)),
-		 colordefs, 2);
+    /* on a TrueColor visual, compute the colors rather than asking */
+    if (term == NULL
+	|| TScreenOf(term) != screen
+	|| !xtermPixelToRGB(term, colordefs)
+	|| !xtermPixelToRGB(term, colordefs + 1))
+	XQueryColors(dpy, DefaultColormap(dpy, DefaultScreen(dpy)),
+		     colordefs, 2);
     XRecolorCursor(dpy, cursor, colordefs, colordefs + 1);
     cleanup_colored_cursor();
     return;

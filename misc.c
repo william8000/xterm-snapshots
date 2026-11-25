@@ -2784,6 +2784,15 @@ QueryOneColor(XtermWidget xw, XColor *def)
     return result;
 }
 
+/*
+ * Like QueryOneColor, but return False rather than asking the server.
+ */
+Boolean
+xtermPixelToRGB(XtermWidget xw, XColor *def)
+{
+    return VisualIsRGB(xw) ? QueryOneColor(xw, def) : False;
+}
+
 /***====================================================================***/
 
 /*
