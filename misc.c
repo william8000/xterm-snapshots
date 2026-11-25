@@ -7793,6 +7793,93 @@ xtermUpdateRestartCommand(XtermWidget xw)
 }
 #endif /* OPT_SESSION_MGT */
 
+/*
+ * Xt's String to Pixel converter asks the server to allocate each color, and
+ * its first use initializes Xcms, which costs several round trips.  For a
+ * "#rgb" color in a TrueColor default colormap, compute the pixel instead.
+ */
+static Boolean
+xtermCvtStringToPixel(Display *dpy,
+		      XrmValuePtr args,
+		      Cardinal *num_args,
+		      XrmValuePtr from,
+		      XrmValuePtr to,
+		      XtPointer *closure_ret)
+{
+    const char *str = (const char *) from->addr;
+
+    if (*num_args == 2 && str != NULL && *str == '#') {
+	Screen *scr = *((Screen **) (void *) args[0].addr);
+	Colormap cmap = *((Colormap *) (void *) args[1].addr);
+	const Visual *vis = DefaultVisualOfScreen(scr);
+	XColor def;
+
+	if (cmap == DefaultColormapOfScreen(scr)
+	    && vis->class == TrueColor
+	    && XParseColor(dpy, cmap, str, &def)) {
+	    static Pixel result;
+	    const unsigned long masks[3] =
+	    {vis->red_mask, vis->green_mask, vis->blue_mask};
+	    const unsigned short values[3] =
+	    {def.red, def.green, def.blue};
+	    Pixel pixel = 0;
+	    int n;
+
+	    for (n = 0; n < 3; ++n) {
+		unsigned long mask = masks[n];
+		int shift = 0;
+		int bits = 0;
+
+		while (mask != 0 && !(mask & 1)) {
+		    mask >>= 1;
+		    ++shift;
+		}
+		while (mask & 1) {
+		    mask >>= 1;
+		    ++bits;
+		}
+		if (bits > 0 && bits <= 16)
+		    pixel |= ((Pixel) (values[n] >> (16 - bits))) << shift;
+	    }
+
+	    if (to->addr != NULL) {
+		if (to->size < sizeof(Pixel)) {
+		    to->size = sizeof(Pixel);
+		    return False;
+		}
+		*(Pixel *) (void *) to->addr = pixel;
+	    } else {
+		result = pixel;
+		to->addr = (XPointer) &result;
+	    }
+	    to->size = sizeof(Pixel);
+	    TRACE(("xtermCvtStringToPixel %s -> %#lx\n", str, pixel));
+	    return True;
+	}
+    }
+    return XtCvtStringToPixel(dpy, args, num_args, from, to, closure_ret);
+}
+
+static void
+xtermSetPixelConverter(void)
+{
+    /* the same arguments as Xt's own color converter */
+    static XtConvertArgRec pixelConvertArgs[] =
+    {
+	{XtWidgetBaseOffset,
+	 (XtPointer) XtOffsetOf(WidgetRec, core.screen),
+	 sizeof(Screen *)},
+	{XtWidgetBaseOffset,
+	 (XtPointer) XtOffsetOf(WidgetRec, core.colormap),
+	 sizeof(Colormap)}
+    };
+
+    /* this also applies to the application context created afterwards */
+    XtSetTypeConverter(XtRString, XtRPixel, xtermCvtStringToPixel,
+		       pixelConvertArgs, XtNumber(pixelConvertArgs),
+		       XtCacheByDisplay, NULL);
+}
+
 Widget
 xtermOpenApplication(XtAppContext * app_context_return,
 		     String my_class,
@@ -7808,6 +7895,7 @@ xtermOpenApplication(XtAppContext * app_context_return,
     Widget result;
 
     XtSetErrorHandler(xt_error);
+    xtermSetPixelConverter();
 #if OPT_SESSION_MGT
     result = XtOpenApplication(app_context_return,
 			       my_class,
