@@ -109,6 +109,11 @@ USE_chr1=`echo "$USE_name" | sed -e 's/^.//'`
 USE_Name=${USE_chr0}${USE_chr1}
 USE_NAME=`echo "$USE_name" | tr "$lower" "$upper"`
 
+fontpath=/usr/share/X11/fonts
+xorgcfgdir=/etc/X11
+xorgcfgfil=xorg.conf
+X_MANSECT=7
+
 sed	-e 's%__vendorversion__%"X Window System"%' \
 	-e 's%__app_version__%Patch\ \#'"$PATCH_NUM"% \
 	-e 's%__app_date__%'"$PATCH_YMD"% \
@@ -136,6 +141,9 @@ sed	-e 's%__vendorversion__%"X Window System"%' \
 	-e "s%__wtmp_name__%@WTMP_NAME@%g" \
 	-e "s%__wtmp_path__%@WTMP_PATH@%g" \
 	-e 's%/\\(\*\*%/*%g' \
+	-e s%__fontpath__%$fontpath%g \
+	-e s%__xorgcfgdir__%$xorgcfgdir%g \
+	-e s%__xorgcfgfil__%$xorgcfgfil%g \
 	"$OLD_FILE" >$NEW_FILE
 # diff -u $OLD_FILE $NEW_FILE
 
