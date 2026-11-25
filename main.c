@@ -1442,6 +1442,11 @@ CachedInternAtom(Display *display, const char *name)
     static const char *const known_atoms[] =
     {
 	"FONT",
+	/* not used by xterm, but Xlib caches these for Xt and itself */
+	"UTF8_STRING",
+	"WM_CLIENT_LEADER",
+	"WM_LOCALE_NAME",
+	"WM_PROTOCOLS",
 	"WM_CLASS",
 	"WM_DELETE_WINDOW",
 	"_NET_ACTIVE_WINDOW",
