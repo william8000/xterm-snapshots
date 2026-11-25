@@ -6004,6 +6004,46 @@ getVisualDepth(XtermWidget xw)
     return result;
 }
 
+#ifdef HAVE_LIBXPM
+/*
+ * libXpm asks the server for each color of an icon, which costs a round trip
+ * per color (over 200 for the default icon).  On a TrueColor visual, compute
+ * the pixel locally as AllocOneColor does.
+ */
+static int
+xpmAllocColor(Display *dpy, Colormap cmap, char *name, XColor *def, void *closure)
+{
+    XtermWidget xw = (XtermWidget) closure;
+
+    if (name != NULL && !XParseColor(dpy, cmap, name, def))
+	return -1;
+    if (VisualIsRGB(xw)) {
+	def->pixel = MaskIt(red, 0) | MaskIt(green, 1) | MaskIt(blue, 2);
+	return 1;
+    }
+    return XAllocColor(dpy, cmap, def) != 0;
+}
+
+static int
+xpmFreeColors(Display *dpy, Colormap cmap, Pixel *pixels, int n, void *closure)
+{
+    XtermWidget xw = (XtermWidget) closure;
+
+    if (!VisualIsRGB(xw))
+	XFreeColors(dpy, cmap, pixels, n, 0);
+    return 0;
+}
+
+static void
+xpmInitAttributes(XtermWidget xw, XpmAttributes *attributes)
+{
+    attributes->valuemask = XpmAllocColor | XpmFreeColors | XpmColorClosure;
+    attributes->alloc_color = xpmAllocColor;
+    attributes->free_colors = xpmFreeColors;
+    attributes->color_closure = (void *) xw;
+}
+#endif /* HAVE_LIBXPM */
+
 /*
  * WM_ICON_SIZE should be honored if possible.
  */
@@ -6035,8 +6075,9 @@ xtermLoadIcon(XtermWidget xw, const char *icon_hint)
 	    XpmAttributes attributes;
 	    struct stat sb;
 
+	    xpmInitAttributes(xw, &attributes);
 	    attributes.depth = (unsigned) getVisualDepth(xw);
-	    attributes.valuemask = XpmDepth;
+	    attributes.valuemask |= XpmDepth;
 
 	    if (IsEmpty(workname)
 		|| lstat(workname, &sb) != 0
@@ -6068,6 +6109,7 @@ xtermLoadIcon(XtermWidget xw, const char *icon_hint)
      */
     if (myIcon == 0 && hint != eHintNone) {
 	char **data;
+	XpmAttributes attributes;
 #if OPT_BUILTIN_XPMS
 	const XPM_DATA *myData = NULL;
 	myData = BuiltInXPM(mini_xterm_xpms);
@@ -6083,10 +6125,11 @@ xtermLoadIcon(XtermWidget xw, const char *icon_hint)
 #else
 	data = (char **) &mini_xterm_48x48_xpm;
 #endif
+	xpmInitAttributes(xw, &attributes);
 	if (XpmCreatePixmapFromData(dpy,
 				    DefaultRootWindow(dpy),
 				    data,
-				    &myIcon, &myMask, NULL) == 0) {
+				    &myIcon, &myMask, &attributes) == 0) {
 	    ReportIcons(("loaded built-in pixmap icon\n"));
 	} else {
 	    myIcon = 0;

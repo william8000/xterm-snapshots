@@ -1053,6 +1053,48 @@ noUsableXft(XtermWidget xw, const char *name)
 }
 #endif
 
+/*
+ * Copy the metrics of a font which is already open, for a new font id.
+ * XFreeFont frees the copy as it would a result of XLoadQueryFont.
+ */
+static XFontStruct *
+copyFontStruct(const XFontStruct *fs, Font fid)
+{
+    XFontStruct *copy = malloc(sizeof(*copy));
+
+    if (copy != NULL) {
+	size_t nchars = 0;
+
+	*copy = *fs;
+	copy->fid = fid;
+	copy->ext_data = NULL;
+	copy->properties = NULL;
+	copy->per_char = NULL;
+	if (fs->per_char != NULL)
+	    nchars = ((size_t) (fs->max_byte1 - fs->min_byte1 + 1)
+		      * (size_t) (fs->max_char_or_byte2
+				  - fs->min_char_or_byte2 + 1));
+	if (fs->n_properties > 0
+	    && (copy->properties = malloc((size_t) fs->n_properties
+					  * sizeof(XFontProp))) == NULL) {
+	    free(copy);
+	    return NULL;
+	}
+	if (nchars != 0
+	    && (copy->per_char = malloc(nchars * sizeof(XCharStruct))) == NULL) {
+	    free(copy->properties);
+	    free(copy);
+	    return NULL;
+	}
+	if (copy->properties != NULL)
+	    memcpy(copy->properties, fs->properties,
+		   (size_t) fs->n_properties * sizeof(XFontProp));
+	if (copy->per_char != NULL)
+	    memcpy(copy->per_char, fs->per_char, nchars * sizeof(XCharStruct));
+    }
+    return copy;
+}
+
 XFontStruct *
 xtermLoadQueryFont(XtermWidget xw, const char *name)
 {
@@ -1062,7 +1104,30 @@ xtermLoadQueryFont(XtermWidget xw, const char *name)
 	;			/* just ignore it */
     } else {
 	TScreen *screen = TScreenOf(xw);
-	result = XLoadQueryFont(screen->display, name);
+	int n;
+
+	/*
+	 * At startup in UTF-8 mode, xterm loads the default fonts and then
+	 * the UTF-8 fonts, which usually derive the same wide font.  Its
+	 * metrics can be over 700kB, which is slow over a remote connection,
+	 * so copy them from the open font.  XLoadFont does not wait for a
+	 * reply.
+	 */
+	for (n = 0; n < fMAX; ++n) {
+	    const XTermFonts *open = &screen->fnts[n];
+	    if (open->fs != NULL
+		&& open->fn != NULL
+		&& !strcmp(open->fn, name)) {
+		Font fid = XLoadFont(screen->display, name);
+		if ((result = copyFontStruct(open->fs, fid)) == NULL)
+		    XUnloadFont(screen->display, fid);
+		else
+		    TRACE(("xtermLoadQueryFont copied metrics of %s\n", name));
+		break;
+	    }
+	}
+	if (result == NULL)
+	    result = XLoadQueryFont(screen->display, name);
     }
     TRACE(("xtermLoadQueryFont ->%s\n", visibleFont(result)));
     return result;
