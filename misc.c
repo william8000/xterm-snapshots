@@ -7898,6 +7898,96 @@ xtermSetPixelConverter(void)
 		       XtCacheByDisplay, NULL);
 }
 
+#if OPT_SESSION_MGT
+/*
+ * Return true if an argument could set the display or application name,
+ * which xtermFastOpenApplication() would have to choose the way Xt does.
+ */
+static Boolean
+mayNameDisplay(const char *arg)
+{
+    size_t len = strlen(arg);
+
+    return (strstr(arg, "display") != NULL
+	    || strstr(arg, "name") != NULL
+	    || (len >= 2 && !strncmp(arg, "-display", len))
+	    || (len >= 3 && !strncmp(arg, "-name", len)));
+}
+
+/*
+ * XtOpenApplication(), but opening the display first so that the atoms Xt
+ * interns one at a time come from xterm's batch.  Return NULL to let Xt do it
+ * when the display or application name might not be the defaults.
+ */
+static Widget
+xtermFastOpenApplication(XtAppContext * app_context_return,
+			 String my_class,
+			 XrmOptionDescRec * options,
+			 Cardinal num_options,
+			 int *argc_in_out,
+			 char **argv_in_out,
+			 String *fallback_resources,
+			 WidgetClass widget_class,
+			 ArgList args,
+			 Cardinal num_args)
+{
+    int saved_argc = *argc_in_out;
+    char **saved_argv;
+    const char *name;
+    XtAppContext app;
+    Display *dpy;
+    Widget result;
+    Arg my_args[3];
+    ArgList merged;
+    int n;
+
+    if (saved_argc < 1 || getenv("RESOURCE_NAME") != NULL)
+	return NULL;
+    for (n = 1; n < saved_argc; ++n) {
+	if (!strcmp(argv_in_out[n], "-e"))
+	    break;
+	if (mayNameDisplay(argv_in_out[n]))
+	    return NULL;
+    }
+    name = strrchr(argv_in_out[0], '/');
+    name = (name != NULL) ? (name + 1) : argv_in_out[0];
+    if (*name == '\0')
+	return NULL;
+
+    if ((saved_argv = TypeMallocN(char *, (size_t) saved_argc + 1)) == NULL)
+	return NULL;
+    if ((dpy = XOpenDisplay(NULL)) == NULL) {
+	free(saved_argv);
+	return NULL;
+    }
+    xtermPreloadAtoms(dpy);
+
+    for (n = 0; n < saved_argc; ++n)
+	saved_argv[n] = argv_in_out[n];
+    saved_argv[n] = NULL;
+
+    XtToolkitInitialize();
+    app = XtCreateApplicationContext();
+    if (fallback_resources != NULL)
+	XtAppSetFallbackResources(app, fallback_resources);
+    XtDisplayInitialize(app, dpy, name, my_class,
+			options, num_options,
+			argc_in_out, argv_in_out);
+
+    XtSetArg(my_args[0], XtNscreen, DefaultScreenOfDisplay(dpy));
+    XtSetArg(my_args[1], XtNargc, saved_argc);
+    XtSetArg(my_args[2], XtNargv, saved_argv);
+    merged = XtMergeArgLists(args, num_args, my_args, XtNumber(my_args));
+    result = XtAppCreateShell(NULL, my_class, widget_class, dpy,
+			      merged, num_args + XtNumber(my_args));
+    XtFree((char *) merged);
+    free(saved_argv);
+
+    *app_context_return = app;
+    return result;
+}
+#endif /* OPT_SESSION_MGT */
+
 Widget
 xtermOpenApplication(XtAppContext * app_context_return,
 		     String my_class,
@@ -7915,16 +8005,27 @@ xtermOpenApplication(XtAppContext * app_context_return,
     XtSetErrorHandler(xt_error);
     xtermSetPixelConverter();
 #if OPT_SESSION_MGT
-    result = XtOpenApplication(app_context_return,
-			       my_class,
-			       options,
-			       num_options,
-			       argc_in_out,
-			       argv_in_out,
-			       fallback_resources,
-			       widget_class,
-			       args,
-			       num_args);
+    result = xtermFastOpenApplication(app_context_return,
+				      my_class,
+				      options,
+				      num_options,
+				      argc_in_out,
+				      argv_in_out,
+				      fallback_resources,
+				      widget_class,
+				      args,
+				      num_args);
+    if (result == NULL)
+	result = XtOpenApplication(app_context_return,
+				   my_class,
+				   options,
+				   num_options,
+				   argc_in_out,
+				   argv_in_out,
+				   fallback_resources,
+				   widget_class,
+				   args,
+				   num_args);
     IceAddConnectionWatch(icewatch, NULL);
 #else
     (void) widget_class;

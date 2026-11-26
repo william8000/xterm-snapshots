@@ -1357,6 +1357,7 @@ extern int GetBytesAvailable (Display * /* dpy */);
 extern int kill_process_group (int /* pid */, int /* sig */);
 extern int nonblocking_wait (void);
 extern Atom CachedInternAtom(Display * /* display */, const char * /* name */);
+extern void xtermPreloadAtoms(Display * /* display */);
 
 extern int get_tty_erase(int /* fd */, int /* default_erase */, const char * /* tag */);
 extern int get_tty_lnext(int /* fd */, int /* default_lnext */, const char * /* tag */);

@@ -1431,66 +1431,97 @@ xtermDisabledChar(void)
 }
 
 /*
+ * Aside from a couple of rarely used atoms, the others are all known.
+ */
+static const char *const known_atoms[] =
+{
+    "FONT",
+    /* not used by xterm, but Xlib caches these for Xt and itself */
+    "Custom Data",
+    "Custom Init",
+    "UTF8_STRING",
+    "WM_CLIENT_LEADER",
+    "WM_LOCALE_NAME",
+    "WM_PROTOCOLS",
+    "WM_CLASS",
+    "WM_DELETE_WINDOW",
+    "_NET_ACTIVE_WINDOW",
+    "_NET_FRAME_EXTENTS",
+    "_NET_FRAME_EXTENTS",
+    "_NET_SUPPORTED",
+    "_NET_SUPPORTING_WM_CHECK",
+    "_NET_WM_ALLOWED_ACTIONS",
+    "_NET_WM_ICON_NAME",
+    "_NET_WM_NAME",
+    "_NET_WM_PID",
+    "_NET_WM_STATE",
+    "_NET_WM_STATE_ADD",
+    "_NET_WM_STATE_FULLSCREEN",
+    "_NET_WM_STATE_HIDDEN",
+    "_NET_WM_STATE_MAXIMIZED_HORZ",
+    "_NET_WM_STATE_MAXIMIZED_VERT",
+    "_NET_WM_STATE_REMOVE",
+    "_WIN_SUPPORTING_WM_CHECK",
+    "_XTERM_FONT_CACHE",
+#if defined(HAVE_XKB_BELL_EXT)
+    XkbBN_Info,
+    XkbBN_MarginBell,
+    XkbBN_MinorError,
+    XkbBN_TerminalBell,
+#endif
+#if defined(HAVE_XKBQUERYEXTENSION)
+    "Num Lock",
+    "Caps Lock",
+    "Scroll Lock",
+#endif
+};
+
+#define NumKnownAtoms  XtNumber(known_atoms)
+
+/*
+ * The "+1" entry of the array is used for the occasional atom which is not
+ * predefined.
+ */
+static struct {
+    Atom atom;
+    const char *name;
+} AtomCache[NumKnownAtoms + 1];
+
+/*
+ * Pre-load the known atoms in one request to reduce latency.
+ */
+void
+xtermPreloadAtoms(Display *display)
+{
+    Atom atom_return[NumKnownAtoms];
+    Cardinal i;
+    int code;
+
+    TRACE(("initialising atom list\n"));
+    code = XInternAtoms(display,
+			(char **) known_atoms,
+			(int) NumKnownAtoms,
+			False,
+			atom_return);
+    /*
+     * result should be Success, but actually returns BadRequest.
+     * manpage says XInternAtoms can generate BadAlloc and BadValue errors.
+     */
+    if (code > BadRequest)
+	SysError(ERROR_GET_ATOM);
+
+    for (i = 0; i < NumKnownAtoms; ++i) {
+	AtomCache[i].name = known_atoms[i];
+	AtomCache[i].atom = atom_return[i];
+    }
+}
+
+/*
  * Retrieve (possibly allocating) an atom from the server.  Cache the result.
  */
 Atom
 CachedInternAtom(Display *display, const char *name)
 {
-    /*
-     * Aside from a couple of rarely used atoms, the others are all known.
-     */
-    static const char *const known_atoms[] =
-    {
-	"FONT",
-	/* not used by xterm, but Xlib caches these for Xt and itself */
-	"UTF8_STRING",
-	"WM_CLIENT_LEADER",
-	"WM_LOCALE_NAME",
-	"WM_PROTOCOLS",
-	"WM_CLASS",
-	"WM_DELETE_WINDOW",
-	"_NET_ACTIVE_WINDOW",
-	"_NET_FRAME_EXTENTS",
-	"_NET_FRAME_EXTENTS",
-	"_NET_SUPPORTED",
-	"_NET_SUPPORTING_WM_CHECK",
-	"_NET_WM_ALLOWED_ACTIONS",
-	"_NET_WM_ICON_NAME",
-	"_NET_WM_NAME",
-	"_NET_WM_PID",
-	"_NET_WM_STATE",
-	"_NET_WM_STATE_ADD",
-	"_NET_WM_STATE_FULLSCREEN",
-	"_NET_WM_STATE_HIDDEN",
-	"_NET_WM_STATE_MAXIMIZED_HORZ",
-	"_NET_WM_STATE_MAXIMIZED_VERT",
-	"_NET_WM_STATE_REMOVE",
-	"_WIN_SUPPORTING_WM_CHECK",
-	"_XTERM_FONT_CACHE",
-#if defined(HAVE_XKB_BELL_EXT)
-	XkbBN_Info,
-	XkbBN_MarginBell,
-	XkbBN_MinorError,
-	XkbBN_TerminalBell,
-#endif
-#if defined(HAVE_XKBQUERYEXTENSION)
-	"Num Lock",
-	"Caps Lock",
-	"Scroll Lock",
-#endif
-    };
-
-#define NumKnownAtoms  XtNumber(known_atoms)
-
-    /*
-     * The "+1" entry of the array is used for the occasional atom which is not
-     * predefined.
-     */
-    static struct {
-	Atom atom;
-	const char *name;
-    } AtomCache[NumKnownAtoms + 1];
-
     Boolean found = False;
     Atom result = None;
     Cardinal i;
@@ -1505,29 +1536,8 @@ CachedInternAtom(Display *display, const char *name)
 	SysError(ERROR_GET_ATOM);
     }
 
-    if (AtomCache[0].name == NULL) {
-	/* pre-load a number of atoms in one request to reduce latency */
-	Atom atom_return[NumKnownAtoms];
-	int code;
-
-	TRACE(("initialising atom list\n"));
-	code = XInternAtoms(display,
-			    (char **) known_atoms,
-			    (int) NumKnownAtoms,
-			    False,
-			    atom_return);
-	/*
-	 * result should be Success, but actually returns BadRequest.
-	 * manpage says XInternAtoms can generate BadAlloc and BadValue errors.
-	 */
-	if (code > BadRequest)
-	    SysError(ERROR_GET_ATOM);
-
-	for (i = 0; i < NumKnownAtoms; ++i) {
-	    AtomCache[i].name = known_atoms[i];
-	    AtomCache[i].atom = atom_return[i];
-	}
-    }
+    if (AtomCache[0].name == NULL)
+	xtermPreloadAtoms(display);
 
     /* Linear search is probably OK here, due to the small number of atoms */
     for (i = 0; i < NumKnownAtoms; i++) {
