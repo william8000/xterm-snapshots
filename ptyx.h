@@ -2889,9 +2889,9 @@ typedef struct {
 
 	Boolean		brokenCopyArea;	/* resource for no_copy_area */
 	Boolean		no_copy_area;	/* true to suppress XCopyArea calls */
-	int		incopy;		/* 0 idle; 1 XCopyArea issued;
-					    -1 first GraphicsExpose seen,
-					    but last not seen		*/
+	int		incopy;		/* XCopyAreas awaiting their
+					    NoExpose/GraphicsExpose	*/
+	Boolean		copy_refresh;	/* repaint all when incopy is 0	*/
 	int		copy_src_x;	/* params from last XCopyArea ... */
 	int		copy_src_y;
 	unsigned int	copy_width;
@@ -2911,8 +2911,6 @@ typedef struct {
 	BellVolume	marginVolume;	/* margin-bell volume           */
 	BellVolume	warningVolume;	/* warning-bell volume          */
 	Boolean		multiscroll;	/* true if multi-scroll		*/
-	int		scrolls;	/* outstanding scroll count,
-					    used only with multiscroll	*/
 	SavedCursor	sc[SAVED_CURSORS]; /* data for restore cursor	*/
 	IFlags		save_modes[DP_LAST]; /* save dec/xterm private modes */
 

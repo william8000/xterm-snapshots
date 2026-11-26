@@ -144,7 +144,6 @@ static int ClearInLine2(XtermWidget xw,
 			int col,
 			unsigned len);
 static void ClearLeft(XtermWidget xw);
-static void CopyWait(XtermWidget xw);
 static void horizontal_copy_area(XtermWidget xw,
 				 int firstchar,
 				 int nchars,
@@ -1078,16 +1077,6 @@ xtermScroll(XtermWidget xw, int amount)
 		}
 	    }
 
-	    if (amount == 1 &&
-		screen->multiscroll &&
-		screen->topline == 0 &&
-		screen->top_marg == 0 &&
-		screen->bot_marg == screen->max_row) {
-		if (screen->incopy < 0 && screen->scrolls == 0)
-		    CopyWait(xw);
-		screen->scrolls++;
-	    }
-
 	    vertical_copy_area(xw,
 			       scrolltop + amount,
 			       scrollheight,
@@ -1322,16 +1311,6 @@ RevScroll(XtermWidget xw, int amount)
 	    scrollheight -= limit;
 	if ((limit = screen->top_marg + refreshheight - 1 - bot) > 0)
 	    refreshheight -= limit;
-
-	if (amount == 1 &&
-	    screen->multiscroll &&
-	    screen->topline == 0 &&
-	    screen->top_marg == 0 &&
-	    screen->bot_marg == screen->max_row) {
-	    if (screen->incopy < 0 && screen->scrolls == 0)
-		CopyWait(xw);
-	    screen->scrolls++;
-	}
 
 	vertical_copy_area(xw,
 			   scrolltop - amount,
@@ -2570,75 +2549,6 @@ do_ti_xtra_scroll(XtermWidget xw)
     }
 }
 
-static void
-CopyWait(XtermWidget xw)
-{
-    TScreen *screen = TScreenOf(xw);
-    XEvent reply;
-    XEvent *rep = &reply;
-#ifndef NO_ACTIVE_ICON
-    int retries = 0;
-#endif
-
-#if USE_DOUBLE_BUFFER
-    if (resource.buffered)
-	return;
-#endif
-
-    for (;;) {
-#ifndef NO_ACTIVE_ICON
-	if (xw->work.active_icon != eiFalse) {
-	    /*
-	     * The XWindowEvent call blocks until an event is available.  That
-	     * can hang when using active-icon and iconifying/deiconifying
-	     * while the terminal is receiving lots of output.  Checking with
-	     * this call on the other hand may lose exposure events which
-	     * arrive too late.  As a compromise, try several times with a
-	     * time-delay before assuming no more events are available.
-	     */
-	    if (XCheckWindowEvent(screen->display,
-				  VWindow(screen),
-				  ExposureMask,
-				  &reply)) {
-		retries = 0;
-	    } else {
-		if (++retries >= 1000)
-		    return;
-		usleep(100U);	/* wait 0.1msec */
-		continue;
-	    }
-	} else
-#endif
-	    XWindowEvent(screen->display, VWindow(screen), ExposureMask, &reply);
-	switch (reply.type) {
-	case Expose:
-	    HandleExposure(xw, &reply);
-	    break;
-	case NoExpose:
-	case GraphicsExpose:
-	    if (screen->incopy <= 0) {
-		screen->incopy = 1;
-		if (screen->scrolls > 0)
-		    screen->scrolls--;
-	    }
-	    if (reply.type == GraphicsExpose)
-		HandleExposure(xw, &reply);
-
-	    if ((reply.type == NoExpose) ||
-		((XExposeEvent *) rep)->count == 0) {
-		if (screen->incopy <= 0 && screen->scrolls > 0)
-		    screen->scrolls--;
-		if (screen->scrolls == 0) {
-		    screen->incopy = 0;
-		    return;
-		}
-		screen->incopy = -1;
-	    }
-	    break;
-	}
-    }
-}
-
 /*
  * used by vertical_copy_area and and horizontal_copy_area
  */
@@ -2654,11 +2564,13 @@ copy_area(XtermWidget xw,
     TScreen *screen = TScreenOf(xw);
 
     if (width != 0 && height != 0) {
-	/* wait for previous CopyArea to complete unless
-	   multiscroll is enabled and active */
-	if (screen->incopy && screen->scrolls == 0)
-	    CopyWait(xw);
-	screen->incopy = -1;
+	/*
+	 * Do not wait for the NoExpose/GraphicsExpose of earlier copies: over
+	 * a slow link that costs a round trip per scroll.  Count them instead;
+	 * a double-buffer copy's events never reach VTGraphicsOrNoExpose.
+	 */
+	if (VDrawable(screen) == VWindow(screen))
+	    screen->incopy++;
 
 	/* save for translating Expose events */
 	screen->copy_src_x = src_x;
@@ -2763,6 +2675,20 @@ scrolling_copy_area(XtermWidget xw,
 }
 
 /*
+ * Repaint the whole VT window.
+ * Returns 1 iff the area where the cursor was got refreshed.
+ */
+int
+xtermRefreshWindow(XtermWidget xw)
+{
+    TScreen *screen = TScreenOf(xw);
+
+    return handle_translated_exposure(xw, 0, 0,
+				      FullWidth(screen),
+				      FullHeight(screen));
+}
+
+/*
  * Handler for Expose events on the VT widget.
  * Returns 1 iff the area where the cursor was got refreshed.
  */
@@ -2786,6 +2712,15 @@ HandleExposure(XtermWidget xw, XEvent *event)
 	   reply->height,
 	   reply->width));
 #endif /* NO_ACTIVE_ICON */
+
+    /*
+     * Later copies have moved the exposed area by an unknown amount, so
+     * repaint everything once the copies are done.
+     */
+    if (screen->incopy > 1) {
+	screen->copy_refresh = True;
+	return 0;
+    }
 
     /* if not doing CopyArea or if this is a GraphicsExpose, don't translate */
     if (!screen->incopy || event->type != Expose) {
@@ -2970,7 +2905,6 @@ handle_translated_exposure(XtermWidget xw,
 
     nrows = (y1 - 1) / FontHeight(screen) - toprow + 1;
     ncols = (x1 - 1) / FontWidth(screen) - leftcol + 1;
-    toprow -= screen->scrolls;
     if (toprow < 0) {
 	nrows += toprow;
 	toprow = 0;

@@ -9690,22 +9690,18 @@ VTGraphicsOrNoExpose(XEvent *event)
 {
     XtermWidget xw = term;
     TScreen *screen = TScreenOf(xw);
-    if (screen->incopy <= 0) {
-	screen->incopy = 1;
-	if (screen->scrolls > 0)
-	    screen->scrolls--;
-    }
     if (event->type == GraphicsExpose)
 	if (HandleExposure(xw, event))
 	    screen->cursor_state = OFF;
     if ((event->type == NoExpose)
 	|| ((XGraphicsExposeEvent *) event)->count == 0) {
-	if (screen->incopy <= 0 && screen->scrolls > 0)
-	    screen->scrolls--;
-	if (screen->scrolls)
-	    screen->incopy = -1;
-	else
-	    screen->incopy = 0;
+	if (screen->incopy > 0)
+	    screen->incopy--;
+	if (screen->incopy == 0 && screen->copy_refresh) {
+	    screen->copy_refresh = False;
+	    if (xtermRefreshWindow(xw))
+		screen->cursor_state = OFF;
+	}
     }
 }
 
@@ -13091,7 +13087,8 @@ VTRealize(Widget w,
     }
 
     ResetWrap(screen);
-    screen->scrolls = screen->incopy = 0;
+    screen->incopy = 0;
+    screen->copy_refresh = False;
     xtermSetCursorBox(screen);
 
     screen->savedlines = 0;

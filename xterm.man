@@ -1108,14 +1108,12 @@ the \fBVT Options\fP menu.
 This option indicates that reverse-wraparound should not be allowed.
 .TP 8
 .B \-s
-This option indicates that \fI\*n\fP may scroll asynchronously, meaning that
-the screen does not have to be kept completely up to date while scrolling.
-This allows \fI\*n\fP to run faster when network latencies are very high
-and is typically useful when running across a very large internet or many
-gateways.
+This option is ignored.
+\fI\*n\fP always scrolls without waiting for the server to finish
+each scroll.
 .TP 8
 .B +s
-This option indicates that \fI\*n\fP should scroll synchronously.
+This option is ignored.
 .TP 8
 .B \-samename
 Does not send title and icon name change requests when the request
@@ -4748,8 +4746,9 @@ events.
 The default is \*(``250\*('' milliseconds.
 .TP 8
 .B "multiScroll\fP (class\fB MultiScroll\fP)"
-Specifies whether or not scrolling should be done asynchronously.
-The default is \*(``false\*(''.
+This resource is ignored.
+\fI\*n\fP always scrolls without waiting for the server to finish
+each scroll.
 .TP 8
 .B "nMarginBell\fP (class\fB Column\fP)"
 Specifies the number of characters from the right margin at which the margin

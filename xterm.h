@@ -1817,6 +1817,7 @@ extern Pixel getXtermBackground (XtermWidget /* xw */, unsigned /* flags */, int
 extern Pixel getXtermForeground (XtermWidget /* xw */, unsigned /* flags */, int /* color */);
 extern char * xtermSetLocale (int /* category */, String /* after */);
 extern int HandleExposure (XtermWidget /* xw */, XEvent * /* event */);
+extern int xtermRefreshWindow (XtermWidget /* xw */);
 extern int dimRound (double /* value */);
 extern int drawXtermText (const XTermDraw * /* param */, GC /* gc */, int /* x */, int /* y */, const IChar * /* text */, const Char * /* size */, Cardinal /* len */);
 extern int extendedBoolean (const char * /* value */, const FlagList * /* table */, Cardinal /* limit */);
