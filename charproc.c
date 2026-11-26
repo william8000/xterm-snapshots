@@ -13388,10 +13388,20 @@ xim_create_xic(XtermWidget xw, Widget theInput)
 				   (void *) 0);
 	}
     } else {
+	/*
+	 * Without a client window, XCreateIC skips the two round trips it
+	 * makes to find the default colormap, which this style does not use.
+	 */
 	input->xic = XCreateIC(input->xim, XNInputStyle, input_style,
-			       XNClientWindow, myWindow,
-			       XNFocusWindow, myWindow,
 			       (void *) 0);
+	if (input->xic
+	    && XSetICValues(input->xic,
+			    XNClientWindow, myWindow,
+			    XNFocusWindow, myWindow,
+			    (void *) 0) != NULL) {
+	    XDestroyIC(input->xic);
+	    input->xic = NULL;
+	}
     }
 
     if (!input->xic) {
