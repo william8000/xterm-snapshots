@@ -12781,8 +12781,9 @@ VTRealize(Widget w,
     if (screen->utf8_mode) {
 	TRACE(("check if this is a wide font, if not try again\n"));
 	if (utf8_first || xtermLoadWideFonts(xw, False)) {
+	    /* the size is set below, so resizing here only costs round trips */
 	    if (!utf8_first)
-		SetVTFont(xw, screen->menu_font_number, True, NULL);
+		SetVTFont(xw, screen->menu_font_number, False, NULL);
 	    /* we will not be able to switch to ISO-8859-1 */
 	    if (!screen->mergedVTFonts) {
 		screen->utf8_fonts = uAlways;
