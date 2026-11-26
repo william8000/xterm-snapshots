@@ -6368,41 +6368,22 @@ ChangeGroup(XtermWidget xw, const char *attribute, char *value)
 				? "_NET_WM_NAME"
 				: "_NET_WM_ICON_NAME");
 	Atom my_atom = CachedInternAtom(dpy, propname);
+	/*
+	 * Only xterm writes these properties, so compare with the last value
+	 * written rather than reading it back, which costs a round trip.
+	 */
+	static char *last_net_name[2];
+	char **last = &last_net_name[!strcmp(my_attr, XtNtitle)];
 
 	if (my_atom != None) {
 	    changed = True;
 
 	    if (IsSetUtf8Title(xw)) {
 #if OPT_SAME_NAME
-		if (resource.sameName) {
-		    Atom actual_type;
-		    Atom requested_type = XA_UTF8_STRING(dpy);
-		    int actual_format = 0;
-		    long long_length = 1024;
-		    unsigned long nitems = 0;
-		    unsigned long bytes_after = 0;
-		    unsigned char *prop = NULL;
-
-		    if (xtermGetWinProp(dpy,
-					VShellWindow(xw),
-					my_atom,
-					0L,
-					long_length,
-					requested_type,
-					&actual_type,
-					&actual_format,
-					&nitems,
-					&bytes_after,
-					&prop)) {
-			if (actual_type == requested_type
-			    && actual_format == 8
-			    && prop != NULL
-			    && nitems == strlen(value)
-			    && memcmp(value, prop, nitems) == 0) {
-			    changed = False;
-			}
-			XFree(prop);
-		    }
+		if (resource.sameName
+		    && *last != NULL
+		    && strcmp(value, *last) == 0) {
+		    changed = False;
 		}
 #endif /* OPT_SAME_NAME */
 		if (changed) {
@@ -6413,10 +6394,13 @@ ChangeGroup(XtermWidget xw, const char *attribute, char *value)
 				    PropModeReplace,
 				    (Char *) value,
 				    (int) strlen(value));
+		    free(*last);
+		    *last = x_strdup(value);
 		}
 	    } else {
 		ReportIcons(("...deleting %s\n", propname));
 		XDeleteProperty(dpy, VShellWindow(xw), my_atom);
+		FreeAndNull(*last);
 	    }
 	}
     }
