@@ -2391,7 +2391,7 @@ ScreenResize(XtermWidget xw,
 			    : "SKIP "),
 			   rows,
 			   move_down));
-		    if (amount > 0) {
+		    if (amount > 0 && move_down > 0) {
 			/* shift lines in visible-buffer to make room */
 			SaveLineData(dst, (unsigned) amount, (size_t) move_down);
 
