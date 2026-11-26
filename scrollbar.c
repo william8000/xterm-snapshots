@@ -245,11 +245,57 @@ DoResizeScreen(XtermWidget xw)
 #endif /* NO_ACTIVE_ICON */
 }
 
+#if defined(HAVE_LIB_XAW)
+/*
+ * Xaw's default thumb is a 50% stipple.  Creating that bitmap makes Xlib load
+ * Xcursor, which queries RENDER (two round trips), and a supplied thumb costs
+ * an XGetGeometry.  On a TrueColor visual, draw the thumb solid in the
+ * average of the foreground and background instead.
+ */
+static Boolean
+canMixThumb(XtermWidget xw)
+{
+    Screen *scr = XtScreen((Widget) xw);
+
+    return (Boolean) (xw->core.colormap == DefaultColormapOfScreen(scr)
+		      && DefaultVisualOfScreen(scr)->class == TrueColor);
+}
+
+static Pixel
+mixPixels(XtermWidget xw, Pixel a, Pixel b)
+{
+    const Visual *vis = DefaultVisualOfScreen(XtScreen((Widget) xw));
+    const unsigned long masks[3] =
+    {vis->red_mask, vis->green_mask, vis->blue_mask};
+    Pixel result = 0;
+    int n;
+
+    for (n = 0; n < 3; ++n) {
+	unsigned long mask = masks[n];
+	int shift = 0;
+
+	if (mask == 0)
+	    continue;
+	while (!(mask & 1)) {
+	    mask >>= 1;
+	    ++shift;
+	}
+	result |= ((((a >> shift) & mask) + ((b >> shift) & mask)) / 2) << shift;
+    }
+    return result;
+}
+#endif
+
 static Widget
 CreateScrollBar(XtermWidget xw, int x, int y, int height)
 {
     Widget result;
-    Arg args[6];
+    Arg args[7];
+    Cardinal nargs = 6;
+#if defined(HAVE_LIB_XAW)
+    SbInfo *sb = &(TScreenOf(xw)->fullVwin.sb_info);
+    Boolean solid = canMixThumb(xw);
+#endif
 
     XtSetArg(args[0], XtNx, x);
     XtSetArg(args[1], XtNy, y);
@@ -257,11 +303,29 @@ CreateScrollBar(XtermWidget xw, int x, int y, int height)
     XtSetArg(args[3], XtNreverseVideo, xw->misc.re_verse);
     XtSetArg(args[4], XtNorientation, XtorientVertical);
     XtSetArg(args[5], XtNborderWidth, ScrollBarBorder(xw));
+#if defined(HAVE_LIB_XAW)
+    if (solid) {
+	XtSetArg(args[nargs], XtNthumb, None);
+	++nargs;
+    }
+#endif
 
     XtInitializeWidgetClass(scrollbarWidgetClass);
     xtermSetCursorConverter();
     result = XtCreateWidget("scrollbar", scrollbarWidgetClass,
-			    (Widget) xw, args, XtNumber(args));
+			    (Widget) xw, args, nargs);
+#if defined(HAVE_LIB_XAW)
+    if (solid) {
+	Pixel fg = 0, bg = 0;
+
+	XtSetArg(args[0], XtNforeground, &fg);
+	XtSetArg(args[1], XtNbackground, &bg);
+	XtGetValues(result, args, 2);
+	sb->solid_thumb = True;
+	sb->thumb_fg = fg;
+	sb->thumb = mixPixels(xw, fg, bg);
+    }
+#endif
     XtAddCallback(result, XtNscrollProc, ScrollTextUpDownBy, NULL);
     XtAddCallback(result, XtNjumpProc, ScrollTextTo, NULL);
     return (result);
@@ -286,6 +350,8 @@ ScrollBarReverseVideo(Widget scrollWidget)
 	    XtSetArg(args[2], XtNborderColor, &(sb->bdr));
 	    XtSetArg(args[3], XtNborderPixmap, &(sb->bdpix));
 	    XtGetValues(scrollWidget, args, nargs);
+	    if (sb->solid_thumb)
+		sb->fg = sb->thumb_fg;
 	    sb->rv_cached = True;
 	    sb->rv_active = 0;
 	}
@@ -298,12 +364,15 @@ ScrollBarReverseVideo(Widget scrollWidget)
 	    XtSetArg(args[0], XtNbackground, sb->bg);
 	    XtSetArg(args[1], XtNforeground, sb->fg);
 	}
+	/* the mixed thumb color is the same either way */
+	if (sb->solid_thumb)
+	    XtSetArg(args[1], XtNforeground, sb->thumb);
 	nargs = 2;		/* don't set border_pixmap */
 	if (sb->bdpix == XtUnspecifiedPixmap) {
 	    /* if not pixmap then pixel */
 	    if (sb->rv_active) {
 		/* keep border visible */
-		XtSetArg(args[2], XtNborderColor, args[1].value);
+		XtSetArg(args[2], XtNborderColor, sb->bg);
 	    } else {
 		XtSetArg(args[2], XtNborderColor, sb->bdr);
 	    }
@@ -538,6 +607,11 @@ ScrollBarOn(XtermWidget xw, Bool init)
 	xtermAddInput(screen->scrollWidget);
 	XtRealizeWidget(screen->scrollWidget);
 	TRACE_TRANS("scrollbar", screen->scrollWidget);
+	/* Xaw rebuilds the thumb's GC for a new foreground only once realized */
+	if (screen->fullVwin.sb_info.solid_thumb)
+	    XtVaSetValues(screen->scrollWidget,
+			  XtNforeground, screen->fullVwin.sb_info.thumb,
+			  (XtPointer) 0);
 
 	screen->fullVwin.sb_info.rv_cached = False;
 

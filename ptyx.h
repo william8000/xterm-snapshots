@@ -2384,6 +2384,9 @@ typedef struct {
 	Pixel		fg;		/* ...cached foreground color	*/
 	Pixel		bdr;		/* ...cached border color	*/
 	Pixmap		bdpix;		/* ...cached border pixmap	*/
+	Boolean		solid_thumb;	/* thumb drawn in a mixed color	*/
+	Pixel		thumb;		/* ...the mixed color		*/
+	Pixel		thumb_fg;	/* ...the foreground it replaced */
 } SbInfo;
 
 #if OPT_TOOLBAR
