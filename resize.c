@@ -85,7 +85,7 @@
 #include <pwd.h>
 
 #ifdef USE_IGNORE_RC
-int ignore_unused;
+static int ignore_unused;
 #endif
 
 #define ESCAPE(string) "\033" string
@@ -217,7 +217,7 @@ onintr(int sig GCC_UNUSED)
     exit(EXIT_FAILURE);
 }
 
-const char *timeout_message = "?";
+static const char *timeout_message = "?";
 
 static void
 resize_timeout(int sig)
