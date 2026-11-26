@@ -109,8 +109,11 @@
 #include <X11/extensions/Xdbe.h>
 #endif
 
-#ifdef HAVE_LIB_XCURSOR
+#if defined(HAVE_LIB_XCURSOR) || defined(HAVE_LIBXPM)
 #include <X11/Xlibint.h>
+#endif
+
+#ifdef HAVE_LIB_XCURSOR
 #include <X11/Xmu/CurUtil.h>
 #endif
 
@@ -6079,6 +6082,85 @@ xpmInitAttributes(XtermWidget xw, XpmAttributes *attributes)
     attributes->free_colors = xpmFreeColors;
     attributes->color_closure = (void *) xw;
 }
+
+/*
+ * XCreatePixmap and XPutImage pass each bitmap to Xcursor, whose first use
+ * queries RENDER (two round trips).  Icon masks are never cursors, so create
+ * the mask with the core request and draw it with rectangles.
+ */
+static Pixmap
+xpmImageToPixmap(Display *dpy, XImage *image)
+{
+    Window root = DefaultRootWindow(dpy);
+    unsigned width = (unsigned) image->width;
+    unsigned height = (unsigned) image->height;
+    Pixmap result;
+    GC gc;
+
+    if (image->depth == 1) {
+	xCreatePixmapReq *req;
+	XRectangle *rects;
+	int count = 0;
+	int x, y;
+
+	LockDisplay(dpy);
+	GetReq(CreatePixmap, req);
+	result = req->pid = (CARD32) XAllocID(dpy);
+	req->drawable = (CARD32) root;
+	req->width = (CARD16) width;
+	req->height = (CARD16) height;
+	req->depth = 1;
+	UnlockDisplay(dpy);
+	SyncHandle();
+
+	gc = XCreateGC(dpy, result, 0, NULL);
+	XSetForeground(dpy, gc, 0);
+	XFillRectangle(dpy, result, gc, 0, 0, width, height);
+	rects = TypeCallocN(XRectangle, (width + 1) / 2 * height);
+	if (rects != NULL) {
+	    for (y = 0; y < image->height; ++y) {
+		for (x = 0; x < image->width; ++x) {
+		    int start = x;
+
+		    while (x < image->width && XGetPixel(image, x, y) != 0)
+			++x;
+		    if (x > start) {
+			rects[count].x = (short) start;
+			rects[count].y = (short) y;
+			rects[count].width = (unsigned short) (x - start);
+			rects[count].height = 1;
+			++count;
+		    }
+		}
+	    }
+	    XSetForeground(dpy, gc, 1);
+	    XFillRectangles(dpy, result, gc, rects, count);
+	    free(rects);
+	}
+    } else {
+	result = XCreatePixmap(dpy, root, width, height,
+			       (unsigned) image->depth);
+	gc = XCreateGC(dpy, result, 0, NULL);
+	XPutImage(dpy, result, gc, image, 0, 0, 0, 0, width, height);
+    }
+    XFreeGC(dpy, gc);
+    return result;
+}
+
+/* convert the images from Xpm into pixmaps, then free them */
+static void
+xpmImagesToPixmaps(Display *dpy,
+		   XImage *image,
+		   XImage *shape,
+		   Pixmap *pixmap,
+		   Pixmap *mask)
+{
+    *pixmap = xpmImageToPixmap(dpy, image);
+    *mask = (shape != NULL) ? xpmImageToPixmap(dpy, shape) : None;
+    XDestroyImage(image);
+    if (shape != NULL)
+	XDestroyImage(shape);
+}
 #endif /* HAVE_LIBXPM */
 
 /*
@@ -6107,8 +6189,8 @@ xtermLoadIcon(XtermWidget xw, const char *icon_hint)
     if (hint == eHintSearch) {
 	int state = 0;
 	while (x_find_icon(&workname, &state, icon_hint, ".xpm") != NULL) {
-	    Pixmap resIcon = 0;
-	    Pixmap shapemask = 0;
+	    XImage *resIcon = NULL;
+	    XImage *shapemask = NULL;
 	    XpmAttributes attributes;
 	    struct stat sb;
 
@@ -6121,15 +6203,14 @@ xtermLoadIcon(XtermWidget xw, const char *icon_hint)
 		|| !S_ISREG(sb.st_mode)) {
 		TRACE(("...failure (no such file)\n"));
 	    } else {
-		int rc = XpmReadFileToPixmap(dpy,
-					     DefaultRootWindow(dpy),
-					     workname,
-					     &resIcon,
-					     &shapemask,
-					     &attributes);
+		int rc = XpmReadFileToImage(dpy,
+					    workname,
+					    &resIcon,
+					    &shapemask,
+					    &attributes);
 		if (rc == XpmSuccess) {
-		    myIcon = resIcon;
-		    myMask = shapemask;
+		    xpmImagesToPixmaps(dpy, resIcon, shapemask,
+				       &myIcon, &myMask);
 		    TRACE(("...success\n"));
 		    ReportIcons(("found/loaded icon-file %s\n", workname));
 		    break;
@@ -6147,6 +6228,8 @@ xtermLoadIcon(XtermWidget xw, const char *icon_hint)
     if (myIcon == 0 && hint != eHintNone) {
 	char **data;
 	XpmAttributes attributes;
+	XImage *image = NULL;
+	XImage *shape = NULL;
 #if OPT_BUILTIN_XPMS
 	const XPM_DATA *myData = NULL;
 	myData = BuiltInXPM(mini_xterm_xpms);
@@ -6163,10 +6246,9 @@ xtermLoadIcon(XtermWidget xw, const char *icon_hint)
 	data = (char **) &mini_xterm_48x48_xpm;
 #endif
 	xpmInitAttributes(xw, &attributes);
-	if (XpmCreatePixmapFromData(dpy,
-				    DefaultRootWindow(dpy),
-				    data,
-				    &myIcon, &myMask, &attributes) == 0) {
+	if (XpmCreateImageFromData(dpy, data, &image, &shape,
+				   &attributes) == XpmSuccess) {
+	    xpmImagesToPixmaps(dpy, image, shape, &myIcon, &myMask);
 	    ReportIcons(("loaded built-in pixmap icon\n"));
 	} else {
 	    myIcon = 0;
