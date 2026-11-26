@@ -79,6 +79,7 @@
 #endif
 
 #include <X11/Xutil.h>
+#include <X11/Xlib-xcb.h>
 #include <stdio.h>
 #include <ctype.h>
 
@@ -2155,11 +2156,54 @@ addTranslation(XtermWidget xw, const char *fromString, const char *toString)
  * mode.  However, if the ALT modifier is used in translations, we do not want
  * to confuse things by sending the parameter.
  */
+static Bool modmap_sent;
+static xcb_get_modifier_mapping_cookie_t modmap_cookie;
+
+/*
+ * Ask for the modifier mapping early, so that the reply arrives during some
+ * other round trip.
+ */
+void
+xtermPrefetchModifiers(Display *dpy)
+{
+    modmap_cookie = xcb_get_modifier_mapping(XGetXCBConnection(dpy));
+    modmap_sent = True;
+}
+
+/* XGetModifierMapping(), using the prefetched reply the first time */
+static XModifierKeymap *
+getModifierMapping(Display *dpy)
+{
+    if (modmap_sent) {
+	xcb_get_modifier_mapping_reply_t *reply;
+
+	modmap_sent = False;
+	reply = xcb_get_modifier_mapping_reply(XGetXCBConnection(dpy),
+					       modmap_cookie, NULL);
+	if (reply != NULL) {
+	    int per = reply->keycodes_per_modifier;
+	    XModifierKeymap *result = NULL;
+
+	    if (per > 0
+		&& xcb_get_modifier_mapping_keycodes_length(reply) == 8 * per
+		&& (result = XNewModifiermap(per)) != NULL) {
+		memcpy(result->modifiermap,
+		       xcb_get_modifier_mapping_keycodes(reply),
+		       (size_t) (8 * per));
+	    }
+	    free(reply);
+	    if (result != NULL)
+		return result;
+	}
+    }
+    return XGetModifierMapping(dpy);
+}
+
 void
 VTInitModifiers(XtermWidget xw)
 {
     Display *dpy = XtDisplay(xw);
-    XModifierKeymap *keymap = XGetModifierMapping(dpy);
+    XModifierKeymap *keymap = getModifierMapping(dpy);
     KeySym keysym;
     int min_keycode, max_keycode, keysyms_per_keycode = 0;
 

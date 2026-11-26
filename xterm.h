@@ -1335,8 +1335,10 @@ extern void StringInput (XtermWidget /* xw */, const Char * /* string */, size_t
 
 #if OPT_NUM_LOCK
 extern void VTInitModifiers(XtermWidget /* xw */);
+extern void xtermPrefetchModifiers(Display * /* dpy */);
 #else
 #define VTInitModifiers(xw) /* nothing */
+#define xtermPrefetchModifiers(dpy) /* nothing */
 #endif
 
 /* linedata.c */

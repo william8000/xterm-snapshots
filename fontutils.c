@@ -42,6 +42,7 @@
 #include <X11/Xmu/Drawing.h>
 #include <X11/Xmu/CharSet.h>
 #include <X11/Xatom.h>
+#include <X11/Xlib-xcb.h>
 
 #include <main.h>
 #include <data.h>
@@ -1281,8 +1282,122 @@ pruneFontCache(const char *base, const char *keep)
 }
 
 /*
+ * Replies that xtermPrefetchFontCache() asked for without waiting.
+ */
+static struct {
+    Bool sent;
+    xcb_get_property_cookie_t token;
+    xcb_get_font_path_cookie_t paths;
+} fontCachePrefetch;
+
+/*
+ * Ask for the cache token and font path early, so that their replies arrive
+ * during some other round trip.
+ */
+void
+xtermPrefetchFontCache(Display *dpy)
+{
+    xcb_connection_t *c = XGetXCBConnection(dpy);
+    Atom atom = XInternAtom(dpy, FONT_CACHE_ATOM, False);	/* cached */
+
+    fontCachePrefetch.token =
+	xcb_get_property(c, 0, (xcb_window_t) DefaultRootWindow(dpy),
+			 (xcb_atom_t) atom, XCB_ATOM_STRING,
+			 0, FONT_CACHE_TOKEN / 4);
+    fontCachePrefetch.paths = xcb_get_font_path(c);
+    fontCachePrefetch.sent = True;
+}
+
+/*
+ * Read the cache token from the root window, if it is valid.
+ */
+static void
+getFontCacheToken(Display *dpy, Atom atom, char *token)
+{
+    token[0] = '\0';
+    if (fontCachePrefetch.sent) {
+	xcb_get_property_reply_t *reply =
+	xcb_get_property_reply(XGetXCBConnection(dpy),
+			       fontCachePrefetch.token, NULL);
+
+	if (reply != NULL) {
+	    const char *data = xcb_get_property_value(reply);
+	    int n = 0;
+
+	    if (reply->type == XCB_ATOM_STRING
+		&& reply->format == 8
+		&& xcb_get_property_value_length(reply) == FONT_CACHE_TOKEN) {
+		while (n < FONT_CACHE_TOKEN && isxdigit(CharOf(data[n]))
+		       && !isupper(CharOf(data[n])))
+		    ++n;
+	    }
+	    if (n == FONT_CACHE_TOKEN) {
+		memcpy(token, data, FONT_CACHE_TOKEN);
+		token[FONT_CACHE_TOKEN] = '\0';
+	    }
+	    free(reply);
+	}
+    } else {
+	Atom type;
+	int format;
+	unsigned long nitems, after;
+	unsigned char *data = NULL;
+
+	if (XGetWindowProperty(dpy, DefaultRootWindow(dpy), atom,
+			       0L, FONT_CACHE_TOKEN / 4,
+			       False, XA_STRING, &type, &format, &nitems,
+			       &after, &data) == Success
+	    && data != NULL) {
+	    if (type == XA_STRING
+		&& format == 8
+		&& nitems == FONT_CACHE_TOKEN
+		&& strspn((char *) data, "0123456789abcdef") == FONT_CACHE_TOKEN)
+		memcpy(token, data, FONT_CACHE_TOKEN + 1);
+	    XFree(data);
+	}
+    }
+}
+
+/*
+ * Hash the font path, including each element's trailing null.
+ */
+static unsigned
+getFontPathHash(Display *dpy)
+{
+    unsigned hash = 2166136261U;
+
+    if (fontCachePrefetch.sent) {
+	xcb_get_font_path_reply_t *reply =
+	xcb_get_font_path_reply(XGetXCBConnection(dpy),
+				fontCachePrefetch.paths, NULL);
+
+	if (reply != NULL) {
+	    xcb_str_iterator_t it = xcb_get_font_path_path_iterator(reply);
+
+	    for (; it.rem > 0; xcb_str_next(&it)) {
+		hash = fontCacheHash(hash, xcb_str_name(it.data),
+				     (size_t) xcb_str_name_length(it.data));
+		hash = fontCacheHash(hash, "", 1);
+	    }
+	    free(reply);
+	}
+    } else {
+	char **paths;
+	int npaths = 0;
+	int n;
+
+	if ((paths = XGetFontPath(dpy, &npaths)) != NULL) {
+	    for (n = 0; n < npaths; ++n)
+		hash = fontCacheHash(hash, paths[n], strlen(paths[n]) + 1);
+	    XFreeFontPath(paths);
+	}
+    }
+    return hash;
+}
+
+/*
  * Return the cache directory for this server, or NULL if there is none.
- * Checking costs two round trips, once.
+ * Checking costs two round trips, once, unless they were prefetched.
  */
 static const char *
 fontCacheDir(XtermWidget xw)
@@ -1298,13 +1413,7 @@ fontCacheDir(XtermWidget xw)
 	const char *home = getenv("HOME");
 	char *base = NULL;
 	char token[FONT_CACHE_TOKEN + 1];
-	Atom type;
-	int format;
-	unsigned long nitems, after;
-	unsigned char *data = NULL;
-	char **paths;
-	int npaths = 0;
-	unsigned hash = 2166136261U;
+	unsigned hash;
 	int n;
 
 	checked = True;
@@ -1316,22 +1425,16 @@ fontCacheDir(XtermWidget xw)
 		sprintf(base, "%s/.cache/xterm/fonts", home);
 	}
 	if (base == NULL || atom == None) {
+	    if (fontCachePrefetch.sent) {
+		xcb_connection_t *c = XGetXCBConnection(dpy);
+		xcb_discard_reply(c, fontCachePrefetch.token.sequence);
+		xcb_discard_reply(c, fontCachePrefetch.paths.sequence);
+	    }
 	    free(base);
 	    return NULL;
 	}
 
-	token[0] = '\0';
-	if (XGetWindowProperty(dpy, root, atom, 0L, FONT_CACHE_TOKEN / 4,
-			       False, XA_STRING, &type, &format, &nitems,
-			       &after, &data) == Success
-	    && data != NULL) {
-	    if (type == XA_STRING
-		&& format == 8
-		&& nitems == FONT_CACHE_TOKEN
-		&& strspn((char *) data, "0123456789abcdef") == FONT_CACHE_TOKEN)
-		memcpy(token, data, sizeof(token));
-	    XFree(data);
-	}
+	getFontCacheToken(dpy, atom, token);
 	if (token[0] == '\0') {
 	    unsigned char bytes[FONT_CACHE_TOKEN / 2];
 	    int fd = open("/dev/urandom", O_RDONLY);
@@ -1352,11 +1455,7 @@ fontCacheDir(XtermWidget xw)
 	    TRACE(("fontCacheDir new token %s\n", token));
 	}
 
-	if ((paths = XGetFontPath(dpy, &npaths)) != NULL) {
-	    for (n = 0; n < npaths; ++n)
-		hash = fontCacheHash(hash, paths[n], strlen(paths[n]) + 1);
-	    XFreeFontPath(paths);
-	}
+	hash = getFontPathHash(dpy);
 
 	if ((result = malloc(strlen(base) + FONT_CACHE_TOKEN + 11)) != NULL) {
 	    sprintf(result, "%s/%s-%08x", base, token, hash);

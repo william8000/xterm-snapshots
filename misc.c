@@ -7961,6 +7961,9 @@ xtermFastOpenApplication(XtAppContext * app_context_return,
 	return NULL;
     }
     xtermPreloadAtoms(dpy);
+    /* Xt's SCREEN_RESOURCES round trip brings these replies */
+    xtermPrefetchFontCache(dpy);
+    xtermPrefetchModifiers(dpy);
 
     for (n = 0; n < saved_argc; ++n)
 	saved_argv[n] = argv_in_out[n];

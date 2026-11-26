@@ -38,6 +38,7 @@
 
 extern Bool xtermLoadDefaultFonts (XtermWidget /* xw */);
 extern Bool xtermLoadUtf8Fonts (XtermWidget /* xw */);
+extern void xtermPrefetchFontCache (Display * /* dpy */);
 extern Bool xtermOpenFont (XtermWidget /* xw */, const char */* name */, XTermFonts * /* result */, XTermFonts * /* current */, Bool /* force */);
 extern XFontStruct * xtermLoadQueryFont(XtermWidget /* xw */, const char * /*name */);
 extern XTermFonts * getDoubleFont (TScreen * /* screen */, int /* which */);
