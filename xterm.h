@@ -1839,6 +1839,7 @@ extern void do_erase_char (XtermWidget /* xw */, int /* param */, int /* mode */
 extern void do_erase_line (XtermWidget /* xw */, int /* param */, int /* mode */);
 extern void do_ti_xtra_scroll (XtermWidget /* xw */);
 extern void getXtermSizeHints (XtermWidget /* xw */);
+extern void initXtermSizeHints (XtermWidget /* xw */);
 extern void recolor_cursor (TScreen * /* screen */, Cursor /* cursor */, unsigned long /* fg */, unsigned long /* bg */);
 extern void resetXtermGC (XtermWidget /* xw */, unsigned /* flags */, Bool /* hilite */);
 extern void scrolling_copy_area (XtermWidget /* xw */, int /* firstline */, int /* nlines */, int /* amount */);

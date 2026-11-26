@@ -12834,7 +12834,7 @@ VTRealize(Widget w,
     pos.y = (Position) (pos.y + pos.scr_y);
 
     /* set up size hints for window manager; min 1 char by 1 char */
-    getXtermSizeHints(xw);
+    initXtermSizeHints(xw);
     xtermSizeHints(xw, (xw->misc.scrollbar
 			? (screen->scrollWidget->core.width
 			   + BorderWidth(screen->scrollWidget))

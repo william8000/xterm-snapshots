@@ -6175,22 +6175,12 @@ xtermLoadIcon(XtermWidget xw, const char *icon_hint)
     }
 
     if (myIcon != 0) {
-	XWMHints *hints = XGetWMHints(dpy, VShellWindow(xw));
-	if (!hints)
-	    hints = XAllocWMHints();
-
-	if (hints) {
-	    hints->flags |= IconPixmapHint;
-	    hints->icon_pixmap = myIcon;
-	    if (myMask) {
-		hints->flags |= IconMaskHint;
-		hints->icon_mask = myMask;
-	    }
-
-	    XSetWMHints(dpy, VShellWindow(xw), hints);
-	    XFree(hints);
-	    ReportIcons(("updated window-manager hints\n"));
-	}
+	/* the shell knows its WM_HINTS, so it need not read them back */
+	XtVaSetValues(SHELL_OF(xw),
+		      XtNiconPixmap, myIcon,
+		      XtNiconMask, myMask,
+		      (XtPointer) 0);
+	ReportIcons(("updated window-manager hints\n"));
     }
 
     free(workname);

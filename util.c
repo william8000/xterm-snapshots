@@ -55,6 +55,7 @@
 /* util.c */
 
 #include <xterm.h>
+#include <X11/ShellP.h>
 
 #include <data.h>
 #include <error.h>
@@ -5507,6 +5508,57 @@ getXtermSizeHints(XtermWidget xw)
     if (!XGetWMNormalHints(screen->display, VShellWindow(xw),
 			   &xw->hints, &supp))
 	memset(&xw->hints, 0, sizeof(xw->hints));
+    TRACE_HINTS(&(xw->hints));
+}
+
+/*
+ * Copy the WM_NORMAL_HINTS that Xt's shell has just written, as Xt computes
+ * them, rather than reading the property back from the server.
+ */
+void
+initXtermSizeHints(XtermWidget xw)
+{
+    Widget shell = SHELL_OF(xw);
+
+    memset(&xw->hints, 0, sizeof(xw->hints));
+    if (XtIsWMShell(shell)) {
+	WMShellPart *wm = &((WMShellWidget) shell)->wm;
+	long flags = wm->size_hints.flags;
+
+	xw->hints.flags = flags;
+	if (flags & (USPosition | PPosition)) {
+	    xw->hints.x = wm->size_hints.x;
+	    xw->hints.y = wm->size_hints.y;
+	}
+	if (flags & (USSize | PSize)) {
+	    xw->hints.width = wm->size_hints.width;
+	    xw->hints.height = wm->size_hints.height;
+	}
+	if (flags & PMinSize) {
+	    xw->hints.min_width = wm->size_hints.min_width;
+	    xw->hints.min_height = wm->size_hints.min_height;
+	}
+	if (flags & PMaxSize) {
+	    xw->hints.max_width = wm->size_hints.max_width;
+	    xw->hints.max_height = wm->size_hints.max_height;
+	}
+	if (flags & PResizeInc) {
+	    xw->hints.width_inc = wm->size_hints.width_inc;
+	    xw->hints.height_inc = wm->size_hints.height_inc;
+	}
+	if (flags & PAspect) {
+	    xw->hints.min_aspect.x = wm->size_hints.min_aspect.x;
+	    xw->hints.min_aspect.y = wm->size_hints.min_aspect.y;
+	    xw->hints.max_aspect.x = wm->size_hints.max_aspect.x;
+	    xw->hints.max_aspect.y = wm->size_hints.max_aspect.y;
+	}
+	if (flags & PBaseSize) {
+	    xw->hints.base_width = wm->base_width;
+	    xw->hints.base_height = wm->base_height;
+	}
+	if (flags & PWinGravity)
+	    xw->hints.win_gravity = wm->win_gravity;
+    }
     TRACE_HINTS(&(xw->hints));
 }
 
