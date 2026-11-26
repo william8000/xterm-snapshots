@@ -1440,7 +1440,6 @@ extern void Redraw (void);
 extern void ReverseOldColors (XtermWidget /* xw */);
 extern GCC_NORETURN void SysError (int /* i */);
 extern void VisualBell (void);
-extern void cleanup_colored_cursor (void);
 extern void do_ansi_rqm (XtermWidget /* xw */, int /* nparam */, int * /* params */);
 extern void do_dcs (XtermWidget /* xw */, Char * /* buf */, size_t /* len */);
 extern void do_dec_rqm (XtermWidget /* xw */, int /* nparam */, int * /* params */);
@@ -1452,7 +1451,6 @@ extern void free_string(String value);
 extern void hide_tek_window (void);
 extern void hide_vt_window (void);
 extern GCC_NORETURN void ice_error (IceConn /* iceConn */);
-extern void init_colored_cursor (Display * /* dpy */);
 extern void parse_ansi_params(ANSI * /* params */, const char ** /* string */);
 extern void reset_decudk (XtermWidget /* xw */);
 extern void set_tek_visibility (Bool /* on */);
@@ -1513,6 +1511,12 @@ extern Boolean xtermPixelToRGB(XtermWidget /* xw */, XColor * /* def */);
 #define AllocOneColor(xw, def) ((def)->pixel = 0)
 #define QueryOneColor(xw, def) ((def)->red = (def)->green = (def)->blue = 0)
 #define xtermPixelToRGB(xw, def) False
+#endif
+
+#ifdef HAVE_LIB_XCURSOR
+extern void xtermSetCursorConverter(void);
+#else
+#define xtermSetCursorConverter() /* nothing */
 #endif
 
 #if OPT_MAXIMIZE

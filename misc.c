@@ -109,6 +109,11 @@
 #include <X11/extensions/Xdbe.h>
 #endif
 
+#ifdef HAVE_LIB_XCURSOR
+#include <X11/Xlibint.h>
+#include <X11/Xmu/CurUtil.h>
+#endif
+
 #if OPT_WIDE_CHARS
 #include <wctype.h>
 #endif
@@ -130,6 +135,9 @@
 
 static Boolean xtermAllocColor(XtermWidget, XColor *, const char *);
 static Cursor make_hidden_cursor(XtermWidget);
+static Cursor xtermGlyphCursor(Display *, Font, Font, unsigned, unsigned,
+			       XColor *, XColor *);
+static Cursor xtermFontCursor(Display *, unsigned);
 
 #if OPT_SET_XPROP
 static void ChangeXprop(char *);
@@ -719,7 +727,7 @@ make_hidden_cursor(XtermWidget xw)
 
     if (fn != NULL) {
 	/* a space character seems to work as a cursor (dots are not needed) */
-	c = XCreateGlyphCursor(dpy, fn->fid, fn->fid, 'X', ' ', &dummy, &dummy);
+	c = xtermGlyphCursor(dpy, fn->fid, fn->fid, 'X', ' ', &dummy, &dummy);
 	XFreeFont(dpy, fn);
     } else {
 	c = None;
@@ -729,108 +737,128 @@ make_hidden_cursor(XtermWidget xw)
 }
 
 /*
- * Xlib uses Xcursor to customize cursor coloring, which interferes with
- * xterm's pointerColor resource.  Work around this by providing our own
- * default theme.  Testing seems to show that we only have to provide this
- * until the window is initialized.
+ * Xlib passes glyph cursors to Xcursor, which costs several round trips to
+ * query RENDER and XFIXES and replaces xterm's cursor colors with a theme.
+ * Unless the cursorTheme resource asks for a theme, send the core request.
  */
-#ifdef HAVE_LIB_XCURSOR
-void
-init_colored_cursor(Display *dpy)
+static Cursor
+xtermGlyphCursor(Display *dpy,
+		 Font source_font,
+		 Font mask_font,
+		 unsigned source_char,
+		 unsigned mask_char,
+		 XColor *fg,
+		 XColor *bg)
 {
-    static const char theme[] = "index.theme";
-    static const char pattern[] = "xterm" MKTEMP_PATTERN;
-    char *env = getenv("XCURSOR_THEME");
+#ifdef HAVE_LIB_XCURSOR
+    if (!strcmp(resource.cursorTheme, "none")) {
+	Cursor cid;
+	xCreateGlyphCursorReq *req;
 
-    xterm_cursor_theme = NULL;
-    /*
-     * The environment variable overrides a (possible) resource Xcursor.theme
-     */
-    if (IsEmpty(env)) {
-	env = XGetDefault(dpy, "Xcursor", "theme");
-	TRACE(("XGetDefault Xcursor theme \"%s\"\n", NonNull(env)));
-    } else {
-	TRACE(("getenv(XCURSOR_THEME) \"%s\"\n", NonNull(env)));
+	LockDisplay(dpy);
+	GetReq(CreateGlyphCursor, req);
+	cid = req->cid = (CARD32) XAllocID(dpy);
+	req->source = (CARD32) source_font;
+	req->mask = (CARD32) mask_font;
+	req->sourceChar = (CARD16) source_char;
+	req->maskChar = (CARD16) mask_char;
+	req->foreRed = fg->red;
+	req->foreGreen = fg->green;
+	req->foreBlue = fg->blue;
+	req->backRed = bg->red;
+	req->backGreen = bg->green;
+	req->backBlue = bg->blue;
+	UnlockDisplay(dpy);
+	SyncHandle();
+	return cid;
     }
-
-    /*
-     * If neither found, provide our own default theme.
-     */
-    if (IsEmpty(env)) {
-	const char *tmp_dir;
-	char *filename;
-	size_t needed;
-
-	TRACE(("init_colored_cursor will make an empty Xcursor theme\n"));
-
-	if ((tmp_dir = getenv("TMPDIR")) == NULL) {
-	    tmp_dir = P_tmpdir;
-	}
-	needed = strlen(tmp_dir) + 4 + strlen(theme) + strlen(pattern);
-	if ((filename = malloc(needed)) != NULL) {
-	    sprintf(filename, "%s/%s", tmp_dir, pattern);
-
-#ifdef HAVE_MKDTEMP
-	    xterm_cursor_theme = mkdtemp(filename);
-#else
-	    if (MakeTemp(filename) != 0
-		&& mkdir(filename, 0700) == 0) {
-		xterm_cursor_theme = filename;
-	    }
 #endif
-	    if (xterm_cursor_theme != filename)
-		free(filename);
-	    /*
-	     * Actually, Xcursor does what _we_ want just by steering its
-	     * search path away from home.  We are setting up the complete
-	     * theme just in case the library ever acquires a maintainer.
-	     */
-	    if (xterm_cursor_theme != NULL) {
-		char *leaf = xterm_cursor_theme + strlen(xterm_cursor_theme);
-		FILE *fp;
-
-		strcat(leaf, "/");
-		strcat(leaf, theme);
-
-		if ((fp = fopen(xterm_cursor_theme, "w")) != NULL) {
-		    fprintf(fp, "[Icon Theme]\n");
-		    fclose(fp);
-		    *leaf = '\0';
-		    xtermSetenv("XCURSOR_PATH", xterm_cursor_theme);
-		    *leaf = '/';
-
-		    TRACE(("...initialized xterm_cursor_theme \"%s\"\n",
-			   xterm_cursor_theme));
-		    atexit(cleanup_colored_cursor);
-		} else {
-		    FreeAndNull(xterm_cursor_theme);
-		}
-	    }
-	}
-    }
+    return XCreateGlyphCursor(dpy, source_font, mask_font,
+			      source_char, mask_char, fg, bg);
 }
-#endif /* HAVE_LIB_XCURSOR */
+
+/* XCreateFontCursor(), using xtermGlyphCursor() */
+static Cursor
+xtermFontCursor(Display *dpy, unsigned c_index)
+{
+#ifdef HAVE_LIB_XCURSOR
+    if (!strcmp(resource.cursorTheme, "none")) {
+	static Font cursor_font;
+	static XColor foreground = {0, 0, 0, 0, 0, 0};
+	static XColor background = {0, 65535, 65535, 65535, 0, 0};
+
+	if (cursor_font == None)
+	    cursor_font = XLoadFont(dpy, "cursor");
+	return xtermGlyphCursor(dpy, cursor_font, cursor_font,
+				c_index, c_index + 1,
+				&foreground, &background);
+    }
+#endif
+    return XCreateFontCursor(dpy, c_index);
+}
+
+#ifdef HAVE_LIB_XCURSOR
+/* XmuCvtStringToCursor(), using xtermFontCursor() for cursor font names */
+static Boolean
+xtermCvtStringToCursor(Display *dpy,
+		       XrmValuePtr args,
+		       Cardinal *num_args,
+		       XrmValuePtr from,
+		       XrmValuePtr to,
+		       XtPointer *closure_ret GCC_UNUSED)
+{
+    static Cursor result;
+    int c_index = XmuCursorNameToIndex((const char *) from->addr);
+    Cursor c;
+
+    if (c_index >= 0) {
+	c = xtermFontCursor(dpy, (unsigned) c_index);
+    } else {
+	XrmValue tmp;
+
+	tmp.size = 0;
+	tmp.addr = NULL;
+	XmuCvtStringToCursor(args, num_args, from, &tmp);
+	if (tmp.addr == NULL)
+	    return False;
+	c = *(Cursor *) (void *) tmp.addr;
+    }
+
+    if (to->addr != NULL) {
+	if (to->size < sizeof(Cursor)) {
+	    to->size = sizeof(Cursor);
+	    return False;
+	}
+	*(Cursor *) (void *) to->addr = c;
+    } else {
+	result = c;
+	to->addr = (XPointer) &result;
+    }
+    to->size = sizeof(Cursor);
+    return True;
+}
 
 /*
- * Once done, discard the file and directory holding it.
+ * Replace the converter that the Xaw Simple class registers, so the
+ * scrollbar's cursors also avoid Xcursor.
  */
 void
-cleanup_colored_cursor(void)
+xtermSetCursorConverter(void)
 {
-#ifdef HAVE_LIB_XCURSOR
-    if (xterm_cursor_theme != NULL) {
-	char *my_path = getenv("XCURSOR_PATH");
-	struct stat sb;
-	if (!IsEmpty(my_path)
-	    && stat(my_path, &sb) == 0
-	    && (sb.st_mode & S_IFMT) == S_IFDIR) {
-	    unlink(xterm_cursor_theme);
-	    rmdir(my_path);
-	}
-	FreeAndNull(xterm_cursor_theme);
+    static XtConvertArgRec cursorConvertArgs[] =
+    {
+	{XtWidgetBaseOffset,
+	 (XtPointer) XtOffsetOf(WidgetRec, core.screen),
+	 sizeof(Screen *)}
+    };
+
+    if (!strcmp(resource.cursorTheme, "none")) {
+	XtSetTypeConverter(XtRString, XtRCursor, xtermCvtStringToCursor,
+			   cursorConvertArgs, XtNumber(cursorConvertArgs),
+			   XtCacheByDisplay, NULL);
     }
-#endif /* HAVE_LIB_XCURSOR */
 }
+#endif
 
 Cursor
 make_colored_cursor(unsigned c_index,		/* index into font */
@@ -862,13 +890,13 @@ make_colored_cursor(unsigned c_index,		/* index into font */
 		 * 0, 2 a shape, 3 a mask for 2, etc.  <X11/cursorfont.h>
 		 * contains defined names for each shape.
 		 */
-		c = XCreateGlyphCursor(dpy,
-				       myFont.fs->fid,	/* source_font */
-				       myFont.fs->fid,	/* mask_font */
-				       c_index + 0,	/* source_char */
-				       c_index + 1,	/* mask_char */
-				       &foreground,
-				       &background);
+		c = xtermGlyphCursor(dpy,
+				     myFont.fs->fid,	/* source_font */
+				     myFont.fs->fid,	/* mask_font */
+				     c_index + 0,	/* source_char */
+				     c_index + 1,	/* mask_char */
+				     &foreground,
+				     &background);
 	    }
 	    XFreeFont(dpy, myFont.fs);
 	}
@@ -878,7 +906,7 @@ make_colored_cursor(unsigned c_index,		/* index into font */
 	}
     }
     if (c == None)
-	c = XCreateFontCursor(dpy, c_index);
+	c = xtermFontCursor(dpy, c_index);
 
     if (c != None) {
 	recolor_cursor(screen, c, fg, bg);

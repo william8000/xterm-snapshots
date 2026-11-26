@@ -258,6 +258,8 @@ CreateScrollBar(XtermWidget xw, int x, int y, int height)
     XtSetArg(args[4], XtNorientation, XtorientVertical);
     XtSetArg(args[5], XtNborderWidth, ScrollBarBorder(xw));
 
+    XtInitializeWidgetClass(scrollbarWidgetClass);
+    xtermSetCursorConverter();
     result = XtCreateWidget("scrollbar", scrollbarWidgetClass,
 			    (Widget) xw, args, XtNumber(args));
     XtAddCallback(result, XtNscrollProc, ScrollTextUpDownBy, NULL);

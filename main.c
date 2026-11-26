@@ -2686,7 +2686,6 @@ main(int argc, char *argv[]ENVP_ARG)
 #ifdef HAVE_LIB_XCURSOR
 	if (!strcmp(resource.cursorTheme, "none")) {
 	    TRACE(("startup with no cursorTheme\n"));
-	    init_colored_cursor(XtDisplay(toplevel));
 	} else {
 	    const char *theme = resource.cursorTheme;
 	    if (IsEmpty(theme))
@@ -5723,8 +5722,6 @@ Exit(int n)
     }
 #endif /* USE_SYSV_UTMP */
 #endif /* HAVE_UTMP */
-
-    cleanup_colored_cursor();
 
     /*
      * Flush pending data before releasing ownership, so nobody else can write

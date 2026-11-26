@@ -109,10 +109,6 @@ char *ttydev;
 int mapstate = -1;
 #endif /* HANDLE_STRUCT_NOTIFY */
 
-#ifdef HAVE_LIB_XCURSOR
-char *xterm_cursor_theme;
-#endif
-
 #if OPT_SESSION_MGT
 int ice_fd = -1;
 char **restart_command;

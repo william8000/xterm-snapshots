@@ -3372,7 +3372,6 @@ recolor_cursor(TScreen *screen,
 	XQueryColors(dpy, DefaultColormap(dpy, DefaultScreen(dpy)),
 		     colordefs, 2);
     XRecolorCursor(dpy, cursor, colordefs, colordefs + 1);
-    cleanup_colored_cursor();
     return;
 }
 

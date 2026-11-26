@@ -135,10 +135,6 @@ extern CellColor initCColor;
 extern int mapstate;
 #endif /* HANDLE_STRUCT_NOTIFY */
 
-#ifdef HAVE_LIB_XCURSOR
-extern char *xterm_cursor_theme;
-#endif
-
 typedef struct XTERM_RESOURCE {
     char *icon_geometry;
     char *title;

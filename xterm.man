@@ -1789,7 +1789,11 @@ The default core cursors are 8x8 pixels;
 Some cursor themes include cursors up to the X server limit of 64x64 pixels.
 .RE
 .IP
-The default value is \*(``none\*(''.
+The default value is \*(``none\*('',
+which makes \fI\*n\fP create the \*(``core\*('' cursors itself,
+ignoring the \fBXcursor.theme\fP resource and the
+\fBXCURSOR_THEME\fP environment variable.
+This also avoids the round trips the Xcursor library makes to the X server.
 Other values (including \*(``default\*('') are passed to the Xcursor
 library to select a cursor theme,
 by setting the \fBXCURSOR_THEME\fP environment variable.
