@@ -1,6 +1,7 @@
 *.o
 *.log
 *.tmp
+*.err
 Makefile
 Tekparse.hin
 VTparse.hin
