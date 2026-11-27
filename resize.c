@@ -340,6 +340,7 @@ main(int argc, char **argv ENVP_ARG)
     char *env;
 #endif
     char *ptr;
+    char *sh_env;
     int emu = VT100;
     char *shell;
     int i;
@@ -361,7 +362,7 @@ main(int argc, char **argv ENVP_ARG)
 #ifdef TTYSIZE_STRUCT
     TTYSIZE_STRUCT ts;
 #endif
-    char *name_of_tty;
+    const char *name_of_tty;
 #ifdef CANT_OPEN_DEV_TTY
     extern char *ttyname();
 #endif
@@ -395,7 +396,7 @@ main(int argc, char **argv ENVP_ARG)
 	/* Find out what kind of shell this user is running.
 	 * This is the same algorithm that xterm uses.
 	 */
-	if ((ptr = x_getenv("SHELL")) == NULL) {
+	if ((ptr = sh_env = x_getenv("SHELL")) == NULL) {
 	    uid_t uid = getuid();
 	    struct passwd pw;
 
@@ -405,7 +406,7 @@ main(int argc, char **argv ENVP_ARG)
 	    if (!OkPasswd(&pw)
 		|| *(ptr = pw.pw_shell) == 0) {
 		/* this is the same default that xterm uses */
-		ptr = x_strdup("/bin/sh");
+		ptr = sh_env = x_strdup("/bin/sh");
 	    }
 	}
 
@@ -418,6 +419,7 @@ main(int argc, char **argv ENVP_ARG)
 	    }
 	}
 	shell_type = shell_list[i].type;
+	free(sh_env);
     }
 
     if (argc == 2) {
@@ -436,7 +438,7 @@ main(int argc, char **argv ENVP_ARG)
 #ifdef CANT_OPEN_DEV_TTY
     if ((name_of_tty = ttyname(fileno(stderr))) == NULL)
 #endif
-	name_of_tty = x_strdup("/dev/tty");
+	name_of_tty = "/dev/tty";
 
     if ((ttyfp = fopen(name_of_tty, "r+")) == NULL) {
 	fprintf(stderr, "%s:  can't open terminal %s\n",
@@ -457,15 +459,17 @@ main(int argc, char **argv ENVP_ARG)
     if (tgetent(termcap, env) <= 0 || termcap[0] == 0) {
 	ok_tcap = 0;
     }
+    free(env);
 #endif /* USE_TERMCAP */
 #ifdef USE_TERMINFO
-    if (x_getenv("TERM") == NULL) {
+    if ((ptr = x_getenv("TERM")) == NULL) {
 	if (SHELL_BOURNE == shell_type) {
 	    setname = "TERM=" DFT_TERMTYPE ";\nexport TERM;\n";
 	} else {
 	    setname = "setenv TERM " DFT_TERMTYPE ";\n";
 	}
     }
+    free(ptr);
 #endif /* USE_TERMINFO */
 
 #ifdef USE_ANY_SYSV_TERMIO
