@@ -1,4 +1,6 @@
 *.o
+*.out
+*.lis
 *.log
 *.tmp
 *.err
