@@ -68,7 +68,7 @@ PIXMAPDIR_DEF	= @no_pixmapdir@-DPIXMAP_ROOTDIR=\"@PIXMAPDIR@/\"
 CPPFLAGS	= -I. -I$(srcdir) -DHAVE_CONFIG_H @CPPFLAGS@ -DDEFCLASS=\"@APP_CLASS@\" $(PIXMAPDIR_DEF) $(EXTRA_CPPFLAGS)
 CFLAGS		= @CFLAGS@ $(EXTRA_CFLAGS)
 LDFLAGS		= @LDFLAGS@ @EXTRA_LDFLAGS@
-LIBS		= @LIBS@ -lX11-xcb -lxcb
+LIBS		= @LIBS@ -lXcursor -lX11-xcb -lxcb
 
 prefix		= @prefix@
 exec_prefix	= @exec_prefix@

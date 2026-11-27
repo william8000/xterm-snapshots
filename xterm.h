@@ -1517,8 +1517,10 @@ extern Boolean xtermPixelToRGB(XtermWidget /* xw */, XColor * /* def */);
 #endif
 
 #ifdef HAVE_LIB_XCURSOR
+extern Bool xtermIsThemeCursor(Cursor);
 extern void xtermSetCursorConverter(void);
 #else
+#define xtermIsThemeCursor(cursor) False
 #define xtermSetCursorConverter() /* nothing */
 #endif
 

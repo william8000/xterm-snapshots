@@ -115,6 +115,7 @@
 
 #ifdef HAVE_LIB_XCURSOR
 #include <X11/Xmu/CurUtil.h>
+#include <X11/Xcursor/Xcursor.h>
 #endif
 
 #if OPT_WIDE_CHARS
@@ -141,6 +142,9 @@ static Cursor make_hidden_cursor(XtermWidget);
 static Cursor xtermGlyphCursor(Display *, Font, Font, unsigned, unsigned,
 			       XColor *, XColor *);
 static Cursor xtermFontCursor(Display *, unsigned);
+#ifdef HAVE_LIB_XCURSOR
+static const char *CursorShapeName(unsigned);
+#endif
 
 #if OPT_SET_XPROP
 static void ChangeXprop(char *);
@@ -739,6 +743,30 @@ make_hidden_cursor(XtermWidget xw)
     return c;
 }
 
+#if defined(HAVE_LIB_XCURSOR) || defined(HAVE_LIBXPM)
+/*
+ * XCreatePixmap passes each bitmap to Xcursor, whose first use queries
+ * RENDER (two round trips), so send the core request.
+ */
+static Pixmap
+xtermCreateBitmap(Display *dpy, unsigned width, unsigned height)
+{
+    xCreatePixmapReq *req;
+    Pixmap result;
+
+    LockDisplay(dpy);
+    GetReq(CreatePixmap, req);
+    result = req->pid = (CARD32) XAllocID(dpy);
+    req->drawable = (CARD32) DefaultRootWindow(dpy);
+    req->width = (CARD16) width;
+    req->height = (CARD16) height;
+    req->depth = 1;
+    UnlockDisplay(dpy);
+    SyncHandle();
+    return result;
+}
+#endif
+
 /*
  * Xlib passes glyph cursors to Xcursor, which costs several round trips to
  * query RENDER and XFIXES and replaces xterm's cursor colors with a theme.
@@ -780,6 +808,137 @@ xtermGlyphCursor(Display *dpy,
 			      source_char, mask_char, fg, bg);
 }
 
+#ifdef HAVE_LIB_XCURSOR
+/* the size Xcursor would choose, without asking the server */
+static int
+xtermCursorSize(Display *dpy)
+{
+    const char *s = getenv("XCURSOR_SIZE");
+    int size = 0;
+
+    if (IsEmpty(s))
+	s = XGetDefault(dpy, "Xcursor", "size");
+    if (!IsEmpty(s))
+	size = atoi(s);
+    if (size <= 0 && !IsEmpty(s = XGetDefault(dpy, "Xft", "dpi")))
+	size = atoi(s) * 16 / 72;
+    if (size <= 0) {
+	int screen = DefaultScreen(dpy);
+	size = Min(DisplayWidth(dpy, screen), DisplayHeight(dpy, screen)) / 48;
+    }
+    return size;
+}
+
+/* a bitmap of the image's opaque pixels, or only its dark opaque pixels */
+static Pixmap
+xtermCursorBitmap(Display *dpy, XcursorImage *image, XRectangle *rects,
+		  Bool dark)
+{
+    int width = (int) image->width;
+    int height = (int) image->height;
+    Pixmap result = xtermCreateBitmap(dpy, (unsigned) width, (unsigned) height);
+    GC gc = XCreateGC(dpy, result, 0, NULL);
+    int count = 0;
+    int x, y;
+
+#define CursorBit(p) (((p) >> 24) >= 128 \
+		      && (!dark || (((p) >> 16) & 0xff) + (((p) >> 8) & 0xff) \
+			  + ((p) & 0xff) < 3 * ((p) >> 24) / 2))
+    for (y = 0; y < height; ++y) {
+	const XcursorPixel *row = image->pixels + y * width;
+
+	for (x = 0; x < width; ++x) {
+	    int start = x;
+
+	    while (x < width && CursorBit(row[x]))
+		++x;
+	    if (x > start) {
+		rects[count].x = (short) start;
+		rects[count].y = (short) y;
+		rects[count].width = (unsigned short) (x - start);
+		rects[count].height = 1;
+		++count;
+	    }
+	}
+    }
+#undef CursorBit
+    XSetForeground(dpy, gc, 0);
+    XFillRectangle(dpy, result, gc, 0, 0, (unsigned) width, (unsigned) height);
+    XSetForeground(dpy, gc, 1);
+    XFillRectangles(dpy, result, gc, rects, count);
+    XFreeGC(dpy, gc);
+    return result;
+}
+
+static Cursor *theme_cursors;
+static Cardinal num_theme_cursors;
+
+/*
+ * Xcursor would replace a core cursor with the theme's image, at the cost of
+ * several round trips.  Read the image from the theme's files instead and
+ * send it as a black and white pixmap cursor.
+ */
+static Cursor
+xtermThemeCursor(Display *dpy, unsigned c_index)
+{
+    const char *name = CursorShapeName(c_index);
+    const char *theme = getenv("XCURSOR_THEME");
+    XcursorImage *image;
+    XRectangle *rects;
+    Cursor result = None;
+
+    if (name == NULL)
+	return None;
+    if (IsEmpty(theme))
+	theme = XGetDefault(dpy, "Xcursor", "theme");
+    image = XcursorLibraryLoadImage(name, theme, xtermCursorSize(dpy));
+    if (image == NULL)
+	return None;
+    rects = TypeCallocN(XRectangle, (image->width + 1) / 2 * image->height);
+    if (rects != NULL) {
+	Pixmap source = xtermCursorBitmap(dpy, image, rects, True);
+	Pixmap mask = xtermCursorBitmap(dpy, image, rects, False);
+	xCreateCursorReq *req;
+
+	/* XCreatePixmapCursor would pass the bitmaps to Xcursor */
+	LockDisplay(dpy);
+	GetReq(CreateCursor, req);
+	result = req->cid = (CARD32) XAllocID(dpy);
+	req->source = (CARD32) source;
+	req->mask = (CARD32) mask;
+	req->foreRed = req->foreGreen = req->foreBlue = 0;
+	req->backRed = req->backGreen = req->backBlue = 65535;
+	req->x = (CARD16) image->xhot;
+	req->y = (CARD16) image->yhot;
+	UnlockDisplay(dpy);
+	SyncHandle();
+	XFreePixmap(dpy, source);
+	XFreePixmap(dpy, mask);
+	free(rects);
+	if ((theme_cursors = TypeRealloc(Cursor, num_theme_cursors + 1,
+					 theme_cursors)) != NULL)
+	    theme_cursors[num_theme_cursors++] = result;
+	else
+	    num_theme_cursors = 0;
+    }
+    XcursorImageDestroy(image);
+    TRACE(("xtermThemeCursor %s %s ->%#lx\n", name, NonNull(theme), result));
+    return result;
+}
+
+/* theme cursors keep the theme's colors, as they would with Xcursor */
+Bool
+xtermIsThemeCursor(Cursor cursor)
+{
+    Cardinal j;
+    for (j = 0; j < num_theme_cursors; ++j) {
+	if (theme_cursors[j] == cursor)
+	    return True;
+    }
+    return False;
+}
+#endif
+
 /* XCreateFontCursor(), using xtermGlyphCursor() */
 static Cursor
 xtermFontCursor(Display *dpy, unsigned c_index)
@@ -789,7 +948,10 @@ xtermFontCursor(Display *dpy, unsigned c_index)
 	static Font cursor_font;
 	static XColor foreground = {0, 0, 0, 0, 0, 0};
 	static XColor background = {0, 65535, 65535, 65535, 0, 0};
+	Cursor c = xtermThemeCursor(dpy, c_index);
 
+	if (c != None)
+	    return c;
 	if (cursor_font == None)
 	    cursor_font = XLoadFont(dpy, "cursor");
 	return xtermGlyphCursor(dpy, cursor_font, cursor_font,
@@ -918,14 +1080,11 @@ make_colored_cursor(unsigned c_index,		/* index into font */
 }
 
 /* adapted from <X11/cursorfont.h> */
-static int
-LookupCursorShape(const char *name)
-{
 #define DATA(name) { XC_##name, #name }
-    static struct {
-	int code;
-	const char name[25];
-    } table[] = {
+static const struct {
+    int code;
+    const char name[25];
+} cursor_shapes[] = {
 	DATA(X_cursor),
 	    DATA(arrow),
 	    DATA(based_arrow_down),
@@ -1003,20 +1162,37 @@ LookupCursorShape(const char *name)
 	    DATA(ur_angle),
 	    DATA(watch),
 	    DATA(xterm),
-    };
+};
 #undef DATA
+
+static int
+LookupCursorShape(const char *name)
+{
     Cardinal j;
     int result = -1;
     if (!IsEmpty(name)) {
-	for (j = 0; j < XtNumber(table); ++j) {
-	    if (!strcmp(name, table[j].name)) {
-		result = table[j].code;
+	for (j = 0; j < XtNumber(cursor_shapes); ++j) {
+	    if (!strcmp(name, cursor_shapes[j].name)) {
+		result = cursor_shapes[j].code;
 		break;
 	    }
 	}
     }
     return result;
 }
+
+#ifdef HAVE_LIB_XCURSOR
+static const char *
+CursorShapeName(unsigned c_index)
+{
+    Cardinal j;
+    for (j = 0; j < XtNumber(cursor_shapes); ++j) {
+	if (cursor_shapes[j].code == (int) c_index)
+	    return cursor_shapes[j].name;
+    }
+    return NULL;
+}
+#endif
 
 void
 xtermSetupPointer(XtermWidget xw, const char *theShape)
@@ -6098,21 +6274,11 @@ xpmImageToPixmap(Display *dpy, XImage *image)
     GC gc;
 
     if (image->depth == 1) {
-	xCreatePixmapReq *req;
 	XRectangle *rects;
 	int count = 0;
 	int x, y;
 
-	LockDisplay(dpy);
-	GetReq(CreatePixmap, req);
-	result = req->pid = (CARD32) XAllocID(dpy);
-	req->drawable = (CARD32) root;
-	req->width = (CARD16) width;
-	req->height = (CARD16) height;
-	req->depth = 1;
-	UnlockDisplay(dpy);
-	SyncHandle();
-
+	result = xtermCreateBitmap(dpy, width, height);
 	gc = XCreateGC(dpy, result, 0, NULL);
 	XSetForeground(dpy, gc, 0);
 	XFillRectangle(dpy, result, gc, 0, 0, width, height);

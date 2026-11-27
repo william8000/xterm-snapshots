@@ -3297,6 +3297,8 @@ recolor_cursor(TScreen *screen,
     Display *dpy = screen->display;
     XColor colordefs[2];	/* 0 is foreground, 1 is background */
 
+    if (xtermIsThemeCursor(cursor))
+	return;
     colordefs[0].pixel = fg;
     colordefs[1].pixel = bg;
     /* on a TrueColor visual, compute the colors rather than asking */

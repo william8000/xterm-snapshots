@@ -29,6 +29,7 @@ Startup:
 - In UTF-8 mode, the UTF-8 fonts are loaded first instead of after the
   default fonts.
 - Core cursors are created without Xcursor unless `cursorTheme` is set.
+  The theme's image is read from disk and sent as a black and white cursor.
 
 Running:
 
