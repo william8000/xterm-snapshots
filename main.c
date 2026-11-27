@@ -5606,6 +5606,15 @@ QuicklyExit(int n)
     _exit(n);
 }
 
+#elif defined(HAVE__MCLEANUP)
+/* Compile with -DHAVE__MCLEANUP for gprof runs */
+#include <sys/gmon.h>
+static GCC_NORETURN void
+QuicklyExit(int n)
+{
+    _mcleanup();
+    _exit(n);
+}
 #else
 #define QuicklyExit(n) _exit(n)
 #endif
