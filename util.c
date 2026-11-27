@@ -3896,17 +3896,21 @@ drawClippedXftString(XTermDraw * params,
 		     int x,
 		     int y,
 		     const IChar *text,
-		     Cardinal len)
+		     Cardinal len,
+		     int ncells)
 {
-    int ncells = xtermXftWidth(params, attr_flags,
-			       fg_color,
-			       font, x, y,
-			       text,
-			       len);
     XtermWidget xw = params->xw;
     TScreen *screen = TScreenOf(xw);
     int fontHigh = FontHeight(screen);
     int fontWide = FontWidth(screen);
+
+    if (ncells < 0) {
+	ncells = xtermXftWidth(params, attr_flags,
+			       fg_color,
+			       font, x, y,
+			       text,
+			       len);
+    }
 
     if (fontWide > 2) {
 	int plength = (ncells ? ncells : 1);
@@ -4594,6 +4598,7 @@ drawXtermText(const XTermDraw * params,
 	XTermXftFonts *wdata0;
 #endif
 	int ncells = 0;
+	int save_ncells = -1;
 
 #if OPT_DEC_CHRSET
 	/*
@@ -4644,7 +4649,7 @@ drawXtermText(const XTermDraw * params,
 
 	if (!(recur.draw_flags & NOBACKGROUND)) {
 	    XftColor *bg_color = GET_XFT_BG();
-	    int nc = xtermXftWidth(&recur, recur.attr_flags,
+	    save_ncells = xtermXftWidth(&recur, recur.attr_flags,
 				   bg_color,
 				   XftFp(ndata), x, y,
 				   text,
@@ -4652,7 +4657,7 @@ drawXtermText(const XTermDraw * params,
 	    XftDrawRect(screen->renderDraw,
 			bg_color,
 			x, y,
-			(unsigned) (nc * FontWidth(screen)),
+			(unsigned) (save_ncells * FontWidth(screen)),
 			(unsigned) FontHeight(screen));
 	}
 
@@ -4795,7 +4800,8 @@ drawXtermText(const XTermDraw * params,
 						      curX,
 						      y,
 						      text + first,
-						      (Cardinal) (last - first));
+						      (Cardinal) (last - first),
+						      -1);
 			curX += nc * FontWidth(screen);
 			underline_len += (Cardinal) nc;
 		    }
@@ -4824,7 +4830,8 @@ drawXtermText(const XTermDraw * params,
 						      curX,
 						      y,
 						      &ch2,
-						      1);
+						      1,
+						      -1);
 			curX += nc * FontWidth(screen);
 			underline_len += (Cardinal) nc;
 			if (filler) {
@@ -4836,7 +4843,8 @@ drawXtermText(const XTermDraw * params,
 						      curX,
 						      y,
 						      &ch2,
-						      1);
+						      1,
+						      -1);
 			    curX += nc * FontWidth(screen);
 			    underline_len += (Cardinal) nc;
 			}
@@ -4854,7 +4862,8 @@ drawXtermText(const XTermDraw * params,
 					      curX,
 					      y,
 					      text + first,
-					      (Cardinal) (last - first));
+					      (Cardinal) (last - first),
+					      (first == 0) ? save_ncells: -1);
 		underline_len += (Cardinal) nc;
 	    }
 	}
@@ -4867,7 +4876,8 @@ drawXtermText(const XTermDraw * params,
 					  x,
 					  y,
 					  text,
-					  len);
+					  len,
+					  save_ncells);
 	    underline_len += (Cardinal) nc;
 	    ncells = nc;
 	}
