@@ -59,6 +59,33 @@ getScrollback(const TScreen *screen, int row)
 }
 
 /*
+ * Whether a saved line's data block has the layout setupLineData would give a
+ * new block of ncols, so it can be reused.  Saved lines keep the column count
+ * of their block, and their combSize matches it unless wide characters were
+ * turned on after the block was allocated.
+ */
+static Bool
+sameScrollbackLayout(TScreen *screen, CLineData *prior, unsigned ncols)
+{
+    unsigned align = (unsigned) sizeof(int) - 1;
+#if OPT_RESIZE_ADJUST
+    unsigned have = prior->maxLineSize;
+#else
+    unsigned have = prior->lineSize;
+#endif
+
+    if (have != ((ncols + align) & ~align))
+	return False;
+#if OPT_WIDE_CHARS
+    if (prior->combSize != (screen->wide_chars ? screen->max_combining : 0))
+	return False;
+#else
+    (void) screen;
+#endif
+    return True;
+}
+
+/*
  * Allocate a new row in the scrollback FIFO with specified width.
  */
 static LineData *
@@ -76,6 +103,8 @@ addScrollbackWithSize(TScreen *screen, unsigned ncols)
 	which = (unsigned) (screen->saved_fifo % screen->savelines);
 	where = scrnHeadAddr(screen, screen->saveBuf_index, which);
 
+	block = NULL;
+
 	/* discard any obsolete index data */
 	if (screen->saved_fifo > screen->savelines) {
 	    LineData *prior = (LineData *) where;
@@ -84,9 +113,16 @@ addScrollbackWithSize(TScreen *screen, unsigned ncols)
 	     * data block.
 	     */
 	    if (prior->attribs != NULL) {
-		TRACE(("...freeing prior FIFO data in slot %d: %p->%p\n",
-		       which, (void *) prior, (void *) prior->attribs));
-		FreeAndNull(prior->attribs);
+		if (sameScrollbackLayout(screen, prior, ncols)) {
+		    /* the callers overwrite every cell with copyLineData */
+		    TRACE(("...reusing prior FIFO data in slot %d: %p->%p\n",
+			   which, (void *) prior, (void *) prior->attribs));
+		    block = (Char *) prior->attribs;
+		} else {
+		    TRACE(("...freeing prior FIFO data in slot %d: %p->%p\n",
+			   which, (void *) prior, (void *) prior->attribs));
+		    FreeAndNull(prior->attribs);
+		}
 	    }
 	    if (screen->saved_fifo > 2 * screen->savelines) {
 		screen->saved_fifo -= screen->savelines;
@@ -94,7 +130,8 @@ addScrollbackWithSize(TScreen *screen, unsigned ncols)
 	}
 
 	/* allocate the new data */
-	block = allocScrnData(screen, 1, ncols, False);
+	if (block == NULL)
+	    block = allocScrnData(screen, 1, ncols, False);
 
 	/* record the new data in the index */
 	setupLineData(screen, where, (Char *) block, 1, ncols, False);
