@@ -77,7 +77,9 @@ copyLineData(LineData *dst, CLineData *src)
 #if OPT_RESIZE_ADJUST
     Dimension srcDataSize;
     Dimension dstStorage;
+#if OPT_ISO_COLORS
     Dimension col;
+#endif
     Dimension limit;
 #if OPT_WIDE_CHARS
     Char comb;
@@ -109,37 +111,28 @@ copyLineData(LineData *dst, CLineData *src)
     }
     limit = (dstStorage < srcDataSize) ? dstStorage : srcDataSize;
 
-    for (col = 0; col < limit; ++col) {
-	dst->attribs[col] = src->attribs[col];
+#define CopyCells(name) \
+	memcpy(dst->name, src->name, (size_t) limit * sizeof(dst->name[0])); \
+	memset(dst->name + limit, 0, \
+	       (size_t) (dstStorage - limit) * sizeof(dst->name[0]))
+    CopyCells(attribs);
 #if OPT_ISO_COLORS
-	dst->color[col] = src->color[col];
-#endif
-	dst->charData[col] = src->charData[col];
-#if OPT_DEC_RECTOPS
-	dst->charSeen[col] = src->charSeen[col];
-	dst->charSets[col] = src->charSets[col];
-#endif
-#if OPT_WIDE_CHARS
-	for (comb = 0; comb < dst->combSize; ++comb) {
-	    dst->combData[comb][col] = src->combData[comb][col];
-	}
-#endif
-    }
+    memcpy(dst->color, src->color, (size_t) limit * sizeof(dst->color[0]));
     for (col = limit; col < dstStorage; ++col) {
-	dst->attribs[col] = 0;
-#if OPT_ISO_COLORS
 	dst->color[col] = initCColor;
+    }
 #endif
-	dst->charData[col] = 0;
+    CopyCells(charData);
 #if OPT_DEC_RECTOPS
-	dst->charSeen[col] = 0;
-	dst->charSets[col] = 0;
+    CopyCells(charSeen);
+    CopyCells(charSets);
 #endif
 #if OPT_WIDE_CHARS
-	for (comb = 0; comb < dst->combSize; ++comb) {
-	    dst->combData[comb][col] = 0;
-	}
+    for (comb = 0; comb < dst->combSize; ++comb) {
+	CopyCells(combData[comb]);
+    }
 #endif
+#undef CopyCells
 #else
     /*
      * Usually we're copying the same-sized line; a memcpy is faster than
@@ -202,8 +195,8 @@ copyLineData(LineData *dst, CLineData *src)
 	    }
 #endif
 	}
-#endif /* OPT_RESIZE_ADJUST */
     }
+#endif /* OPT_RESIZE_ADJUST */
 }
 
 #if OPT_WIDE_CHARS
