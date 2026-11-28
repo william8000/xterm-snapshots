@@ -4,6 +4,7 @@
 *.log
 *.tmp
 *.err
+perf.data*
 Makefile
 Tekparse.hin
 VTparse.hin
